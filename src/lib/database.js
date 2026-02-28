@@ -1,0 +1,83 @@
+import * as SQLite from 'expo-sqlite';
+
+const dbName = 'pos_database.db';
+
+export const getDBConnection = async () => {
+    return await SQLite.openDatabaseAsync(dbName);
+};
+
+export const initDB = async () => {
+    try {
+        const db = await getDBConnection();
+        await db.execAsync(`
+            PRAGMA journal_mode = WAL;
+            PRAGMA foreign_keys = ON;
+            
+            CREATE TABLE IF NOT EXISTS categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE
+            );
+
+            CREATE TABLE IF NOT EXISTS ingredients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                unit TEXT NOT NULL,
+                stock_quantity REAL NOT NULL DEFAULT 0,
+                cost_per_unit REAL NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS products (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                price REAL NOT NULL,
+                category_id INTEGER,
+                image_uri TEXT,
+                status TEXT DEFAULT 'Available',
+                FOREIGN KEY(category_id) REFERENCES categories(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS product_variants (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_id INTEGER,
+                name TEXT NOT NULL,
+                FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS recipes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_id INTEGER,
+                variant_id INTEGER,
+                ingredient_id INTEGER,
+                quantity REAL NOT NULL,
+                FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE,
+                FOREIGN KEY(variant_id) REFERENCES product_variants(id) ON DELETE CASCADE,
+                FOREIGN KEY(ingredient_id) REFERENCES ingredients(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                total_amount REAL NOT NULL,
+                cash_received REAL NOT NULL,
+                change_amount REAL NOT NULL,
+                status TEXT DEFAULT 'Pending', -- 'Pending', 'Completed' (for Kitchen Queue)
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                synced INTEGER DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS order_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_id INTEGER,
+                product_id INTEGER,
+                variant_id INTEGER,
+                quantity INTEGER NOT NULL,
+                price_at_time REAL NOT NULL,
+                FOREIGN KEY(order_id) REFERENCES orders(id) ON DELETE CASCADE,
+                FOREIGN KEY(product_id) REFERENCES products(id),
+                FOREIGN KEY(variant_id) REFERENCES product_variants(id)
+            );
+        `);
+        console.log("Database initialized successfully.");
+    } catch (e) {
+        console.error("Database initialization error:", e);
+    }
+};
