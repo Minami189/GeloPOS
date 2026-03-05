@@ -1,16 +1,36 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { Package, Tags, Utensils } from 'lucide-react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { Package, Tags, Utensils, RefreshCw } from 'lucide-react-native';
 import IngredientsTab from '../components/admin/IngredientsTab';
 import ProductsTab from '../components/admin/ProductsTab';
 import CategoriesTab from '../components/admin/CategoriesTab';
+import { syncOrdersToSupabase } from '../lib/syncService';
 
 export default function AdminScreen() {
     const [activeTab, setActiveTab] = useState('Ingredients');
+    const [isSyncing, setIsSyncing] = useState(false);
+
+    const handleSync = async () => {
+        setIsSyncing(true);
+        const result = await syncOrdersToSupabase();
+        setIsSyncing(false);
+
+        if (result.success) {
+            Alert.alert("Sync Success", result.message);
+        } else {
+            Alert.alert("Sync Failed", result.error || "Unknown error occurred.");
+        }
+    };
 
     return (
         <View style={styles.container}>
-            <Text style={styles.headerTitle}>Admin Panel</Text>
+            <View style={styles.header}>
+                <Text style={styles.headerTitle}>Admin Panel</Text>
+                <TouchableOpacity style={styles.syncBtn} onPress={handleSync} disabled={isSyncing}>
+                    {isSyncing ? <ActivityIndicator size="small" color="#fff" /> : <RefreshCw color="#fff" size={20} />}
+                    <Text style={styles.syncBtnText}>{isSyncing ? 'Syncing...' : 'Sync to Online'}</Text>
+                </TouchableOpacity>
+            </View>
 
             <View style={styles.tabsContainer}>
                 <TouchableOpacity
@@ -44,7 +64,10 @@ export default function AdminScreen() {
 
 const styles = StyleSheet.create({
     container: { flex: 1, padding: 40, backgroundColor: '#f3f4f6' },
-    headerTitle: { fontSize: 32, fontWeight: 'bold', color: '#1f2937', marginBottom: 30 },
+    header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 30 },
+    headerTitle: { fontSize: 32, fontWeight: 'bold', color: '#1f2937' },
+    syncBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#3b82f6', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, gap: 10 },
+    syncBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
     tabsContainer: {
         flexDirection: 'row',
         gap: 15,

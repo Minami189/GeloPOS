@@ -57,6 +57,11 @@ export const syncOrdersToSupabase = async () => {
 
     } catch (error) {
         console.error("Sync failed:", error);
+
+        if (error.message && (error.message.includes('Failed to fetch') || error.message.includes('Network request failed'))) {
+            return { success: false, error: "Network Error: Please check your internet connection and try again." };
+        }
+
         return { success: false, error: error.message };
     }
 };

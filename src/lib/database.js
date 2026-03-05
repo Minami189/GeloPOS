@@ -1,9 +1,13 @@
 import * as SQLite from 'expo-sqlite';
 
 const dbName = 'pos_database.db';
+let dbInstancePromise = null;
 
 export const getDBConnection = async () => {
-    return await SQLite.openDatabaseAsync(dbName);
+    if (!dbInstancePromise) {
+        dbInstancePromise = SQLite.openDatabaseAsync(dbName);
+    }
+    return dbInstancePromise;
 };
 
 export const initDB = async () => {
