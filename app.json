@@ -20,6 +20,8 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
+      "package": "com.soon.gelopos",
+      "usesCleartextTraffic": true,
       "edgeToEdgeEnabled": true
     },
     "web": {

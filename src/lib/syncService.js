@@ -85,9 +85,23 @@ export const syncCatalogToSupabase = async () => {
 
             if (unsyncedItems && unsyncedItems.length > 0) {
                 // remove 'synced' column from the data before sending to Supabase
+                // and ensure all data types are safe for JSON serialization (dates -> strings)
                 const itemsToInsert = unsyncedItems.map(item => {
                     const { synced, ...rest } = item;
-                    return rest;
+
+                    // Supabase requires proper JSON types. 
+                    // React Native fetch crashes if it gets raw SQLite Date objects or undefined
+                    const sanitized = {};
+                    for (const key in rest) {
+                        if (rest[key] === undefined) {
+                            sanitized[key] = null;
+                        } else if (rest[key] instanceof Date) {
+                            sanitized[key] = rest[key].toISOString();
+                        } else {
+                            sanitized[key] = rest[key];
+                        }
+                    }
+                    return sanitized;
                 });
 
                 const { error } = await supabase
@@ -119,6 +133,30 @@ export const syncCatalogToSupabase = async () => {
 // Top-level sync function to run everything
 export const syncAllToSupabase = async () => {
     try {
+        console.log("--- RUNNING RAW NETWORK DIAGNOSTIC ---");
+        try {
+            const url = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://xyzcompany.supabase.co';
+            const key = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'public-anon-key';
+
+            console.log("Raw Fetching to URL:", url + "/rest/v1/");
+
+            const rawRes = await fetch(`${url}/rest/v1/pos_categories?select=*`, {
+                method: 'GET',
+                headers: {
+                    'apikey': key,
+                    'Authorization': `Bearer ${key}`
+                }
+            });
+            console.log("Raw Fetch Status:", rawRes.status);
+            const text = await rawRes.text();
+            console.log("Raw Fetch Response:", text.substring(0, 100));
+            console.log("--- DIAGNOSTIC COMPLETE (NO CRASH) ---");
+        } catch (rawErr) {
+            console.error("!!! RAW FETCH CRASHED !!!");
+            console.error("Message:", rawErr.message);
+            console.error("This means the emulator physically cannot communicate with the Supabase URL, regardless of the Supabase library being used!");
+        }
+
         const catalogResult = await syncCatalogToSupabase();
         if (!catalogResult.success) return catalogResult;
 
