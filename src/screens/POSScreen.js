@@ -1,11 +1,15 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, Image, Modal, TextInput, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, Image, Modal, TextInput, Alert, ScrollView } from 'react-native';
 import { getDBConnection } from '../lib/database';
-import { ShoppingCart, Plus, Minus, Trash2, X, CheckCircle } from 'lucide-react-native';
+import { ShoppingCart, Plus, Minus, Trash2, X, CheckCircle, Search } from 'lucide-react-native';
 
 export default function POSScreen() {
     const [products, setProducts] = useState([]);
-    const [cart, setCart] = useState([]); // { CartItem: { product, variant, quantity, price } }
+    const [categories, setCategories] = useState([]);
+    const [cart, setCart] = useState([]);
+
+    const [selectedCategory, setSelectedCategory] = useState(null); // null = "All"
+    const [searchQuery, setSearchQuery] = useState('');
 
     const [selectedProduct, setSelectedProduct] = useState(null);
     const [variants, setVariants] = useState([]);
@@ -13,10 +17,13 @@ export default function POSScreen() {
 
     const [paymentModalVisible, setPaymentModalVisible] = useState(false);
     const [cashReceived, setCashReceived] = useState('');
+    const [customerName, setCustomerName] = useState('');
     const [orderComplete, setOrderComplete] = useState(false);
+    const [lastOrderId, setLastOrderId] = useState(null);
 
     useEffect(() => {
         loadProducts();
+        loadCategories();
     }, []);
 
     const loadProducts = async () => {
@@ -26,6 +33,26 @@ export default function POSScreen() {
             setProducts(res || []);
         } catch (e) { console.error("Failed to load POS products", e); }
     };
+
+    const loadCategories = async () => {
+        try {
+            const db = await getDBConnection();
+            const res = await db.getAllAsync('SELECT * FROM categories ORDER BY name ASC');
+            setCategories(res || []);
+        } catch (e) { console.error("Failed to load categories", e); }
+    };
+
+    const filteredProducts = useMemo(() => {
+        let list = products;
+        if (selectedCategory !== null) {
+            list = list.filter(p => p.category_id === selectedCategory);
+        }
+        if (searchQuery.trim()) {
+            const q = searchQuery.trim().toLowerCase();
+            list = list.filter(p => p.name.toLowerCase().includes(q));
+        }
+        return list;
+    }, [products, selectedCategory, searchQuery]);
 
     const handleProductSelect = async (product) => {
         try {
@@ -50,7 +77,7 @@ export default function POSScreen() {
                 newCart[index].quantity += 1;
                 return newCart;
             } else {
-                return [...prev, { product, variant, quantity: 1, price: product.price }];
+                return [...prev, { product, variant, quantity: 1, price: variant ? variant.price ?? product.price : product.price }];
             }
         });
         setVariantModalVisible(false);
@@ -77,7 +104,9 @@ export default function POSScreen() {
     const handleCheckout = () => {
         if (cart.length === 0) return;
         setCashReceived('');
+        setCustomerName('');
         setOrderComplete(false);
+        setLastOrderId(null);
         setPaymentModalVisible(true);
     };
 
@@ -95,18 +124,16 @@ export default function POSScreen() {
 
         try {
             const db = await getDBConnection();
+            const trimmedName = customerName.trim() || null;
 
             // Deduct stock for ingredients
             for (let item of cart) {
-                // Get recipe for this product/variant
                 let recs;
                 if (item.variant) {
                     recs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id = ?', item.product.id, item.variant.id);
                 } else {
                     recs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id IS NULL', item.product.id);
                 }
-
-                // For each recipe item, subtract quantity * ordered_quantity from stock
                 for (let r of recs) {
                     const totalUsed = r.quantity * item.quantity;
                     await db.runAsync('UPDATE ingredients SET stock_quantity = stock_quantity - ? WHERE id = ?', totalUsed, r.ingredient_id);
@@ -115,10 +142,11 @@ export default function POSScreen() {
 
             // Create Order
             const res = await db.runAsync(
-                'INSERT INTO orders (total_amount, cash_received, change_amount, status) VALUES (?, ?, ?, "Pending")',
-                totalAmount, cash, changeAmount
+                'INSERT INTO orders (total_amount, cash_received, change_amount, status, customer_name) VALUES (?, ?, ?, "Pending", ?)',
+                totalAmount, cash, changeAmount, trimmedName
             );
             const orderId = res.lastInsertRowId;
+            setLastOrderId(orderId);
 
             // Create Order Items
             for (let item of cart) {
@@ -140,13 +168,65 @@ export default function POSScreen() {
 
     return (
         <View style={styles.container}>
-            {/* Products Grid */}
+            {/* Products Section */}
             <View style={styles.productsSection}>
-                <Text style={styles.title}>All Products</Text>
+                {/* Search Bar */}
+                <View style={styles.topBar}>
+                    <Text style={styles.title}>All Products</Text>
+                    <View style={styles.searchContainer}>
+                        <Search color="#9ca3af" size={18} style={{ marginRight: 8 }} />
+                        <TextInput
+                            style={styles.searchInput}
+                            placeholder="Search products..."
+                            placeholderTextColor="#9ca3af"
+                            value={searchQuery}
+                            onChangeText={setSearchQuery}
+                        />
+                        {searchQuery.length > 0 && (
+                            <TouchableOpacity onPress={() => setSearchQuery('')}>
+                                <X color="#9ca3af" size={16} />
+                            </TouchableOpacity>
+                        )}
+                    </View>
+                </View>
+
+                {/* Category Navbar */}
+                <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.categoryNav}
+                    contentContainerStyle={styles.categoryNavContent}
+                >
+                    <TouchableOpacity
+                        style={[styles.categoryChip, selectedCategory === null && styles.categoryChipActive]}
+                        onPress={() => setSelectedCategory(null)}
+                    >
+                        <Text style={[styles.categoryChipText, selectedCategory === null && styles.categoryChipTextActive]}>All</Text>
+                    </TouchableOpacity>
+                    {categories.map(cat => (
+                        <TouchableOpacity
+                            key={cat.id}
+                            style={[styles.categoryChip, selectedCategory === cat.id && styles.categoryChipActive]}
+                            onPress={() => setSelectedCategory(cat.id)}
+                        >
+                            <Text style={[styles.categoryChipText, selectedCategory === cat.id && styles.categoryChipTextActive]}>{cat.name}</Text>
+                        </TouchableOpacity>
+                    ))}
+                </ScrollView>
+
+                {/* Products Grid */}
                 <FlatList
-                    data={products}
+                    data={filteredProducts}
                     numColumns={3}
                     keyExtractor={item => item.id.toString()}
+                    key={'grid-3'}
+                    ListEmptyComponent={
+                        <View style={styles.emptyContainer}>
+                            <Text style={styles.emptyText}>
+                                {searchQuery || selectedCategory !== null ? 'No products match your filter.' : 'No products available.'}
+                            </Text>
+                        </View>
+                    }
                     renderItem={({ item }) => (
                         <TouchableOpacity style={styles.productCard} onPress={() => handleProductSelect(item)}>
                             {item.image_uri ?
@@ -203,7 +283,7 @@ export default function POSScreen() {
                 </View>
             </View>
 
-            {/* Modals */}
+            {/* Variant Modal */}
             <Modal visible={variantModalVisible} transparent animationType="fade">
                 <View style={styles.modalOverlay}>
                     <View style={styles.variantModal}>
@@ -221,13 +301,21 @@ export default function POSScreen() {
                 </View>
             </Modal>
 
+            {/* Payment Modal */}
             <Modal visible={paymentModalVisible} transparent animationType="slide">
                 <View style={styles.modalOverlay}>
                     {orderComplete ? (
                         <View style={[styles.paymentModal, { alignItems: 'center', justifyContent: 'center' }]}>
                             <CheckCircle color="#10b981" size={60} />
                             <Text style={[styles.modalTitle, { marginTop: 20 }]}>Payment Complete!</Text>
-                            <Text style={{ color: '#4b5563', fontSize: 16, marginTop: 10 }}>Change: <Text style={{ fontWeight: 'bold', color: '#1f2937' }}>₱{changeAmount.toFixed(2)}</Text></Text>
+                            <Text style={{ color: '#4b5563', fontSize: 16, marginTop: 10 }}>
+                                Change: <Text style={{ fontWeight: 'bold', color: '#1f2937' }}>₱{changeAmount.toFixed(2)}</Text>
+                            </Text>
+                            {lastOrderId && (
+                                <Text style={{ color: '#6b7280', marginTop: 6, fontSize: 14 }}>
+                                    Order #{lastOrderId}{customerName.trim() ? ` · ${customerName.trim()}` : ''}
+                                </Text>
+                            )}
                             <Text style={{ color: '#6b7280', marginTop: 15 }}>Sending to Kitchen Queue...</Text>
                         </View>
                     ) : (
@@ -244,7 +332,17 @@ export default function POSScreen() {
                                 <Text style={styles.billTotalAmount}>₱{totalAmount.toFixed(2)}</Text>
                             </View>
 
-                            <Text style={styles.label}>Cash Received (₱)</Text>
+                            {/* Customer Name */}
+                            <Text style={styles.label}>Customer Name <Text style={{ color: '#9ca3af', fontWeight: 'normal' }}>(optional)</Text></Text>
+                            <TextInput
+                                style={styles.input}
+                                value={customerName}
+                                onChangeText={setCustomerName}
+                                placeholder="Leave blank to use order number"
+                                placeholderTextColor="#9ca3af"
+                            />
+
+                            <Text style={[styles.label, { marginTop: 20 }]}>Cash Received (₱)</Text>
                             <TextInput
                                 style={[styles.input, { fontSize: 30, paddingVertical: 15, fontWeight: 'bold' }]}
                                 value={cashReceived}
@@ -253,7 +351,7 @@ export default function POSScreen() {
                                 autoFocus
                             />
 
-                            <View style={[styles.billSummary, { backgroundColor: 'transparent', flexRow: 'row', justifyContent: 'space-between', marginTop: 30 }]}>
+                            <View style={[styles.billSummary, { backgroundColor: 'transparent', marginTop: 20 }]}>
                                 <Text style={{ fontSize: 20, color: '#4b5563' }}>Change:</Text>
                                 <Text style={{ fontSize: 28, fontWeight: 'bold', color: changeAmount < 0 ? '#ef4444' : '#10b981' }}>
                                     ₱{changeAmount < 0 ? '0.00' : changeAmount.toFixed(2)}
@@ -277,7 +375,44 @@ const styles = StyleSheet.create({
     container: { flex: 1, flexDirection: 'row' },
 
     productsSection: { flex: 2, backgroundColor: '#f3f4f6', padding: 30 },
-    title: { fontSize: 28, fontWeight: 'bold', color: '#1f2937', marginBottom: 20 },
+
+    topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+    title: { fontSize: 28, fontWeight: 'bold', color: '#1f2937' },
+
+    searchContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#fff',
+        borderRadius: 10,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        borderWidth: 1,
+        borderColor: '#e5e7eb',
+        flex: 1,
+        marginLeft: 20,
+        maxWidth: 320,
+    },
+    searchInput: { flex: 1, fontSize: 15, color: '#1f2937', padding: 0 },
+
+    categoryNav: { marginBottom: 16, flexGrow: 0 },
+    categoryNavContent: { flexDirection: 'row', gap: 10, paddingBottom: 4 },
+    categoryChip: {
+        paddingHorizontal: 18,
+        paddingVertical: 8,
+        borderRadius: 20,
+        backgroundColor: '#fff',
+        borderWidth: 1,
+        borderColor: '#e5e7eb',
+    },
+    categoryChipActive: {
+        backgroundColor: '#1f2937',
+        borderColor: '#1f2937',
+    },
+    categoryChipText: { fontSize: 14, color: '#6b7280', fontWeight: '600' },
+    categoryChipTextActive: { color: '#fff' },
+
+    emptyContainer: { alignItems: 'center', marginTop: 60 },
+    emptyText: { fontSize: 16, color: '#9ca3af' },
 
     productCard: { flex: 1, backgroundColor: '#fff', borderRadius: 12, padding: 15, margin: 10, alignItems: 'center', elevation: 2, height: 180 },
     productImage: { width: 80, height: 80, borderRadius: 40, marginBottom: 15 },
@@ -314,14 +449,14 @@ const styles = StyleSheet.create({
     modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 25 },
     modalTitle: { fontSize: 24, fontWeight: 'bold', color: '#1f2937' },
 
-    billSummary: { backgroundColor: '#f3f4f6', padding: 20, borderRadius: 12, alignItems: 'center', marginBottom: 30 },
+    billSummary: { backgroundColor: '#f3f4f6', padding: 20, borderRadius: 12, alignItems: 'center', marginBottom: 20 },
     billTotalText: { fontSize: 16, color: '#6b7280', marginBottom: 5 },
     billTotalAmount: { fontSize: 36, fontWeight: 'bold', color: '#1f2937' },
 
     label: { fontSize: 14, fontWeight: '600', color: '#374151', marginBottom: 8 },
-    input: { borderWidth: 1, borderColor: '#d1d5db', borderRadius: 8, padding: 15, color: '#1f2937' },
+    input: { borderWidth: 1, borderColor: '#d1d5db', borderRadius: 8, padding: 15, color: '#1f2937', fontSize: 15 },
 
-    modalActions: { flexDirection: 'row', justifyContent: 'center', marginTop: 40 },
-    saveButton: { borderRadius: 12, backgroundColor: '#10b981', alignItems: 'center' },
+    modalActions: { flexDirection: 'row', justifyContent: 'center', marginTop: 30 },
+    saveButton: { borderRadius: 12, backgroundColor: '#10b981', alignItems: 'center', paddingHorizontal: 20 },
     saveButtonText: { color: '#fff', fontWeight: 'bold' }
 });

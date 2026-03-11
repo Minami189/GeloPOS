@@ -103,6 +103,18 @@ export const initDB = async () => {
             }
         }
 
+        // --- Migration: Add 'customer_name' column to orders if missing ---
+        try {
+            const ordersInfo = await db.getAllAsync(`PRAGMA table_info(orders)`);
+            const hasCustomerName = ordersInfo.some(col => col.name === 'customer_name');
+            if (!hasCustomerName) {
+                await db.execAsync(`ALTER TABLE orders ADD COLUMN customer_name TEXT;`);
+                console.log("Added 'customer_name' column to orders table");
+            }
+        } catch (err) {
+            console.error('Migration error for orders customer_name:', err);
+        }
+
         console.log("Database initialized successfully.");
     } catch (e) {
         console.error("Database initialization error:", e);
