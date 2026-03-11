@@ -4,7 +4,7 @@ import { Package, Tags, Utensils, RefreshCw } from 'lucide-react-native';
 import IngredientsTab from '../components/admin/IngredientsTab';
 import ProductsTab from '../components/admin/ProductsTab';
 import CategoriesTab from '../components/admin/CategoriesTab';
-import { syncOrdersToSupabase } from '../lib/syncService';
+import { syncAllToSupabase } from '../lib/syncService';
 
 export default function AdminScreen() {
     const [activeTab, setActiveTab] = useState('Ingredients');
@@ -12,7 +12,7 @@ export default function AdminScreen() {
 
     const handleSync = async () => {
         setIsSyncing(true);
-        const result = await syncOrdersToSupabase();
+        const result = await syncAllToSupabase();
         setIsSyncing(false);
 
         if (result.success) {

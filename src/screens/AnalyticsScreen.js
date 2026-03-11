@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Dimensions } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { getDBConnection } from '../lib/database';
-import { syncOrdersToSupabase } from '../lib/syncService';
+import { syncAllToSupabase } from '../lib/syncService';
 import { LineChart, BarChart } from 'react-native-chart-kit';
 import { RefreshCw, TrendingUp, Sparkles } from 'lucide-react-native';
 
@@ -72,7 +72,7 @@ export default function AnalyticsScreen() {
 
     const handleSync = async () => {
         setIsSyncing(true);
-        const result = await syncOrdersToSupabase();
+        const result = await syncAllToSupabase();
         setIsSyncing(false);
 
         if (result.success) {

@@ -19,7 +19,8 @@ export const initDB = async () => {
             
             CREATE TABLE IF NOT EXISTS categories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE
+                name TEXT NOT NULL UNIQUE,
+                synced INTEGER DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS ingredients (
@@ -27,7 +28,8 @@ export const initDB = async () => {
                 name TEXT NOT NULL UNIQUE,
                 unit TEXT NOT NULL,
                 stock_quantity REAL NOT NULL DEFAULT 0,
-                cost_per_unit REAL NOT NULL DEFAULT 0
+                cost_per_unit REAL NOT NULL DEFAULT 0,
+                synced INTEGER DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS products (
@@ -37,6 +39,7 @@ export const initDB = async () => {
                 category_id INTEGER,
                 image_uri TEXT,
                 status TEXT DEFAULT 'Available',
+                synced INTEGER DEFAULT 0,
                 FOREIGN KEY(category_id) REFERENCES categories(id)
             );
 
@@ -44,6 +47,7 @@ export const initDB = async () => {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 product_id INTEGER,
                 name TEXT NOT NULL,
+                synced INTEGER DEFAULT 0,
                 FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
             );
 
@@ -53,6 +57,7 @@ export const initDB = async () => {
                 variant_id INTEGER,
                 ingredient_id INTEGER,
                 quantity REAL NOT NULL,
+                synced INTEGER DEFAULT 0,
                 FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE,
                 FOREIGN KEY(variant_id) REFERENCES product_variants(id) ON DELETE CASCADE,
                 FOREIGN KEY(ingredient_id) REFERENCES ingredients(id) ON DELETE CASCADE
@@ -80,6 +85,24 @@ export const initDB = async () => {
                 FOREIGN KEY(variant_id) REFERENCES product_variants(id)
             );
         `);
+
+        // --- Migration: Add 'synced' column to existing tables if missing ---
+        const tablesToUpdate = ['categories', 'ingredients', 'products', 'product_variants', 'recipes'];
+
+        for (const table of tablesToUpdate) {
+            try {
+                const result = await db.getAllAsync(`PRAGMA table_info(${table})`);
+                const hasSyncedColumn = result.some(col => col.name === 'synced');
+
+                if (!hasSyncedColumn) {
+                    await db.execAsync(`ALTER TABLE ${table} ADD COLUMN synced INTEGER DEFAULT 0;`);
+                    console.log(`Added 'synced' column to ${table} table`);
+                }
+            } catch (err) {
+                console.error(`Migration error for ${table}:`, err);
+            }
+        }
+
         console.log("Database initialized successfully.");
     } catch (e) {
         console.error("Database initialization error:", e);
