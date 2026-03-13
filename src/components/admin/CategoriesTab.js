@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, TextInput, Modal } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, TextInput, Modal, Alert } from 'react-native';
 import { getDBConnection } from '../../lib/database';
+import { deleteRecordFromSupabase } from '../../lib/syncService';
+import { supabase } from '../../lib/supabase';
 import { Plus, Edit2, Trash2, X } from 'lucide-react-native';
 
 export default function CategoriesTab() {
@@ -39,14 +41,36 @@ export default function CategoriesTab() {
         }
     };
 
-    const handleDelete = async (id) => {
-        try {
-            const db = await getDBConnection();
-            await db.runAsync('DELETE FROM categories WHERE id = ?', id);
-            loadCategories();
-        } catch (error) {
-            console.error("Failed to delete category", error);
-        }
+    const handleDelete = (id) => {
+        Alert.alert(
+            "Delete Category",
+            "Are you sure you want to delete this category? This will also delete it from the Cloud database.",
+            [
+                { text: "Cancel", style: "cancel" },
+                { 
+                    text: "Delete", 
+                    style: "destructive",
+                    onPress: async () => {
+                        try {
+                            const db = await getDBConnection();
+
+                            // Detach products linked to this category to prevent FK constraint failures
+                            await db.runAsync('UPDATE products SET category_id = NULL WHERE category_id = ?', id);
+                            await db.runAsync('DELETE FROM categories WHERE id = ?', id);
+
+                            try {
+                                await supabase.from('pos_products').update({ category_id: null }).eq('category_id', id);
+                            } catch (err) {}
+
+                            await deleteRecordFromSupabase('pos_categories', id);
+                            loadCategories();
+                        } catch (error) {
+                            console.error("Failed to delete category", error);
+                        }
+                    }
+                }
+            ]
+        );
     };
 
     const openModal = (item = null) => {

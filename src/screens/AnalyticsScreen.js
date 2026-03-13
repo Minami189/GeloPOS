@@ -2,9 +2,10 @@ import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Dimensions } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { getDBConnection } from '../lib/database';
-import { syncAllToSupabase } from '../lib/syncService';
+import { syncAllToSupabase, fetchOrdersFromSupabase } from '../lib/syncService';
 import { LineChart, BarChart } from 'react-native-chart-kit';
-import { RefreshCw, TrendingUp, Sparkles } from 'lucide-react-native';
+import { RefreshCw, TrendingUp, Sparkles, DownloadCloud } from 'lucide-react-native';
+import AdminAuthGate from '../components/admin/AdminAuthGate';
 
 const screenWidth = Dimensions.get('window').width;
 
@@ -12,6 +13,8 @@ export default function AnalyticsScreen() {
     const [salesSummary, setSalesSummary] = useState({ totalRevenue: 0, totalOrders: 0, avgOrderValue: 0 });
     const [chartData, setChartData] = useState({ labels: [], data: [] });
     const [isSyncing, setIsSyncing] = useState(false);
+    const [isFetching, setIsFetching] = useState(false);
+    const [filterPeriod, setFilterPeriod] = useState('All Time'); // 'All Time', 'Today', 'This Month'
 
     const [aiSuggestions, setAiSuggestions] = useState('');
     const [isAiLoading, setIsAiLoading] = useState(false);
@@ -19,12 +22,18 @@ export default function AnalyticsScreen() {
     useFocusEffect(
         useCallback(() => {
             loadAnalytics();
-        }, [])
+        }, [filterPeriod])
     );
 
     const loadAnalytics = async () => {
         try {
             const db = await getDBConnection();
+            let dateCondition = "";
+            if (filterPeriod === 'Today') {
+                dateCondition = "AND DATE(created_at) = DATE('now', 'localtime')";
+            } else if (filterPeriod === 'This Month') {
+                dateCondition = "AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', 'localtime')";
+            }
 
             // Basic Summary
             const summaryRes = await db.getAllAsync(`
@@ -32,7 +41,7 @@ export default function AnalyticsScreen() {
                     SUM(total_amount) as revenue, 
                     COUNT(id) as orders
                 FROM orders 
-                WHERE status = 'Completed'
+                WHERE status = 'Completed' ${dateCondition}
             `);
 
             const rev = summaryRes[0]?.revenue || 0;
@@ -50,7 +59,7 @@ export default function AnalyticsScreen() {
                 FROM order_items oi
                 JOIN orders o ON oi.order_id = o.id
                 JOIN products p ON oi.product_id = p.id
-                WHERE o.status = 'Completed'
+                WHERE o.status = 'Completed' ${dateCondition.replace('created_at', 'o.created_at')}
                 GROUP BY p.name
                 ORDER BY total_sales DESC
                 LIMIT 5
@@ -77,8 +86,22 @@ export default function AnalyticsScreen() {
 
         if (result.success) {
             Alert.alert("Sync Success", result.message);
+            loadAnalytics(); // Auto-refresh UI
         } else {
             Alert.alert("Sync Failed", result.error || "Unknown error occurred.");
+        }
+    };
+
+    const handleFetch = async () => {
+        setIsFetching(true);
+        const result = await fetchOrdersFromSupabase();
+        setIsFetching(false);
+
+        if (result.success) {
+            Alert.alert("Fetch Success", result.message);
+            loadAnalytics(); // Auto-refresh UI merging local and cloud data
+        } else {
+            Alert.alert("Fetch Failed", result.error || "Unknown error occurred.");
         }
     };
 
@@ -88,7 +111,7 @@ export default function AnalyticsScreen() {
             // Retrieve endpoint or simulate if not provided
             const aiEndpoint = process.env.EXPO_PUBLIC_AI_ENDPOINT;
 
-            if (aiEndpoint) {
+            if (aiEndpoint && aiEndpoint !== 'https://your-ai-service.com/api/suggestions') {
                 const response = await fetch(aiEndpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -98,8 +121,21 @@ export default function AnalyticsScreen() {
                         totalRevenue: salesSummary.totalRevenue
                     })
                 });
-                const data = await response.json();
-                setAiSuggestions(data.suggestion || "Try offering discounts on your highest-selling items to boost volume.");
+                
+                if (!response.ok) {
+                     setAiSuggestions("Unable to generate suggestions. The AI service returned an error.");
+                     setIsAiLoading(false);
+                     return;
+                }
+                
+                try {
+                    const data = await response.json();
+                    setAiSuggestions(data.suggestion || "Try offering discounts on your highest-selling items to boost volume.");
+                } catch (jsonErr) {
+                    console.error("AI JSON Parse Failed", jsonErr);
+                    setAiSuggestions("Received invalid response format from the AI Service.");
+                }
+                
             } else {
                 // Simulated response for demo
                 setTimeout(() => {
@@ -128,13 +164,32 @@ export default function AnalyticsScreen() {
     };
 
     return (
-        <ScrollView style={styles.container}>
-            <View style={styles.header}>
+        <AdminAuthGate>
+            <ScrollView style={styles.container}>
+                <View style={styles.header}>
                 <Text style={styles.title}>Sales Analytics</Text>
-                <TouchableOpacity style={styles.syncBtn} onPress={handleSync} disabled={isSyncing}>
-                    {isSyncing ? <ActivityIndicator size="small" color="#fff" /> : <RefreshCw color="#fff" size={20} />}
-                    <Text style={styles.syncBtnText}>{isSyncing ? 'Syncing...' : 'Sync to Supabase'}</Text>
-                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <TouchableOpacity style={[styles.syncBtn, { backgroundColor: '#8b5cf6' }]} onPress={handleFetch} disabled={isFetching || isSyncing}>
+                        {isFetching ? <ActivityIndicator size="small" color="#fff" /> : <DownloadCloud color="#fff" size={20} />}
+                        <Text style={styles.syncBtnText}>{isFetching ? 'Fetching...' : 'Fetch All'}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.syncBtn} onPress={handleSync} disabled={isSyncing || isFetching}>
+                        {isSyncing ? <ActivityIndicator size="small" color="#fff" /> : <RefreshCw color="#fff" size={20} />}
+                        <Text style={styles.syncBtnText}>{isSyncing ? 'Syncing...' : 'Sync to Supabase'}</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+
+            <View style={styles.filterContainer}>
+                {['All Time', 'Today', 'This Month'].map(period => (
+                    <TouchableOpacity
+                        key={period}
+                        style={[styles.filterBtn, filterPeriod === period && styles.filterBtnActive]}
+                        onPress={() => setFilterPeriod(period)}
+                    >
+                        <Text style={[styles.filterBtnText, filterPeriod === period && styles.filterBtnTextActive]}>{period}</Text>
+                    </TouchableOpacity>
+                ))}
             </View>
 
             <View style={styles.summaryContainer}>
@@ -184,7 +239,8 @@ export default function AnalyticsScreen() {
                 </TouchableOpacity>
             </View>
 
-        </ScrollView>
+            </ScrollView>
+        </AdminAuthGate>
     );
 }
 
@@ -195,6 +251,12 @@ const styles = StyleSheet.create({
 
     syncBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#3b82f6', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, gap: 10 },
     syncBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
+
+    filterContainer: { flexDirection: 'row', gap: 10, marginBottom: 20 },
+    filterBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, backgroundColor: '#e5e7eb' },
+    filterBtnActive: { backgroundColor: '#1f2937' },
+    filterBtnText: { fontSize: 14, color: '#4b5563', fontWeight: '600' },
+    filterBtnTextActive: { color: '#fff' },
 
     summaryContainer: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 30, gap: 20 },
     summaryCard: { flex: 1, backgroundColor: '#fff', padding: 25, borderRadius: 16, elevation: 3, alignItems: 'center' },

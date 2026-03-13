@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, TextInput, Modal, Image, ScrollView, Alert } from 'react-native';
 import { getDBConnection } from '../../lib/database';
+import { deleteRecordFromSupabase } from '../../lib/syncService';
+import { supabase } from '../../lib/supabase';
 import { Plus, Edit2, Trash2, X, UploadCloud, ChevronDown } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 
@@ -169,14 +171,39 @@ export default function ProductsTab() {
         }
     };
 
-    const handleDelete = async (id) => {
-        try {
-            const db = await getDBConnection();
-            await db.runAsync('DELETE FROM products WHERE id = ?', id);
-            loadData();
-        } catch (error) {
-            console.error("Failed to delete product", error);
-        }
+    const handleDelete = (id) => {
+        Alert.alert(
+            "Delete Product",
+            "Are you sure you want to delete this product? This will also delete it from the Cloud database.",
+            [
+                { text: "Cancel", style: "cancel" },
+                { 
+                    text: "Delete", 
+                    style: "destructive",
+                    onPress: async () => {
+                        try {
+                            const db = await getDBConnection();
+                            
+                            // Prevent Foreign Key constraint failures by detaching in SQLite
+                            await db.runAsync('UPDATE order_items SET product_id = NULL, variant_id = NULL WHERE product_id = ?', id);
+                            await db.runAsync('DELETE FROM products WHERE id = ?', id);
+                            
+                            // Detach in Supabase, ignore if error
+                            try {
+                                await supabase.from('pos_order_items')
+                                    .update({ product_id: null, variant_id: null })
+                                    .eq('product_id', id);
+                            } catch (err) {}
+
+                            await deleteRecordFromSupabase('pos_products', id);
+                            loadData();
+                        } catch (error) {
+                            console.error("Failed to delete product", error);
+                        }
+                    }
+                }
+            ]
+        );
     };
 
     const openModal = async (item = null) => {

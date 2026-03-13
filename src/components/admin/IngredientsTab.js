@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, TextInput, Modal } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, TextInput, Modal, Alert } from 'react-native';
 import { getDBConnection } from '../../lib/database';
+import { deleteRecordFromSupabase } from '../../lib/syncService';
 import { Plus, Edit2, Trash2, X } from 'lucide-react-native';
 
 export default function IngredientsTab() {
@@ -50,14 +51,28 @@ export default function IngredientsTab() {
         }
     };
 
-    const handleDelete = async (id) => {
-        try {
-            const db = await getDBConnection();
-            await db.runAsync('DELETE FROM ingredients WHERE id = ?', id);
-            loadIngredients();
-        } catch (error) {
-            console.error("Failed to delete", error);
-        }
+    const handleDelete = (id) => {
+        Alert.alert(
+            "Delete Ingredient",
+            "Are you sure you want to delete this ingredient? This will also delete it from the Cloud database.",
+            [
+                { text: "Cancel", style: "cancel" },
+                { 
+                    text: "Delete", 
+                    style: "destructive",
+                    onPress: async () => {
+                        try {
+                            const db = await getDBConnection();
+                            await db.runAsync('DELETE FROM ingredients WHERE id = ?', id);
+                            await deleteRecordFromSupabase('pos_ingredients', id);
+                            loadIngredients();
+                        } catch (error) {
+                            console.error("Failed to delete", error);
+                        }
+                    }
+                }
+            ]
+        );
     };
 
     const openModal = (item = null) => {

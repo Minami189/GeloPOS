@@ -1,14 +1,18 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
-import { Package, Tags, Utensils, RefreshCw } from 'lucide-react-native';
+import { Package, Tags, Utensils, RefreshCw, History } from 'lucide-react-native';
 import IngredientsTab from '../components/admin/IngredientsTab';
 import ProductsTab from '../components/admin/ProductsTab';
 import CategoriesTab from '../components/admin/CategoriesTab';
-import { syncAllToSupabase } from '../lib/syncService';
+import TransactionsTab from '../components/admin/TransactionsTab';
+import { syncAllToSupabase, fetchDataFromSupabase } from '../lib/syncService';
+import { DownloadCloud } from 'lucide-react-native';
 
 export default function AdminScreen() {
     const [activeTab, setActiveTab] = useState('Ingredients');
     const [isSyncing, setIsSyncing] = useState(false);
+    const [isFetching, setIsFetching] = useState(false);
+    const [syncTrigger, setSyncTrigger] = useState(0);
 
     const handleSync = async () => {
         setIsSyncing(true);
@@ -16,20 +20,40 @@ export default function AdminScreen() {
         setIsSyncing(false);
 
         if (result.success) {
+            setSyncTrigger(prev => prev + 1);
             Alert.alert("Sync Success", result.message);
         } else {
             Alert.alert("Sync Failed", result.error || "Unknown error occurred.");
         }
     };
 
+    const handleFetch = async () => {
+        setIsFetching(true);
+        const result = await fetchDataFromSupabase();
+        setIsFetching(false);
+
+        if (result.success) {
+            setSyncTrigger(prev => prev + 1);
+            Alert.alert("Fetch Success", result.message);
+        } else {
+            Alert.alert("Fetch Failed", result.error || "Unknown error occurred.");
+        }
+    };
+
     return (
         <View style={styles.container}>
             <View style={styles.header}>
-                <Text style={styles.headerTitle}>Admin Panel</Text>
-                <TouchableOpacity style={styles.syncBtn} onPress={handleSync} disabled={isSyncing}>
-                    {isSyncing ? <ActivityIndicator size="small" color="#fff" /> : <RefreshCw color="#fff" size={20} />}
-                    <Text style={styles.syncBtnText}>{isSyncing ? 'Syncing...' : 'Sync to Online'}</Text>
-                </TouchableOpacity>
+            <Text style={styles.headerTitle}>Admin Panel</Text>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <TouchableOpacity style={[styles.syncBtn, { backgroundColor: '#8b5cf6' }]} onPress={handleFetch} disabled={isFetching || isSyncing}>
+                        {isFetching ? <ActivityIndicator size="small" color="#fff" /> : <DownloadCloud color="#fff" size={20} />}
+                        <Text style={styles.syncBtnText}>{isFetching ? 'Fetching...' : 'Fetch from Cloud'}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.syncBtn} onPress={handleSync} disabled={isSyncing || isFetching}>
+                        {isSyncing ? <ActivityIndicator size="small" color="#fff" /> : <RefreshCw color="#fff" size={20} />}
+                        <Text style={styles.syncBtnText}>{isSyncing ? 'Syncing...' : 'Sync to Online'}</Text>
+                    </TouchableOpacity>
+                </View>
             </View>
 
             <View style={styles.tabsContainer}>
@@ -51,12 +75,19 @@ export default function AdminScreen() {
                     <Utensils color={activeTab === 'Ingredients' ? "#1f2937" : "#6b7280"} size={20} />
                     <Text style={[styles.tabText, activeTab === 'Ingredients' && styles.activeTabText]}>Ingredients</Text>
                 </TouchableOpacity>
+                <TouchableOpacity
+                    style={[styles.tab, activeTab === 'Transactions' && styles.activeTab]}
+                    onPress={() => setActiveTab('Transactions')}>
+                    <History color={activeTab === 'Transactions' ? "#1f2937" : "#6b7280"} size={20} />
+                    <Text style={[styles.tabText, activeTab === 'Transactions' && styles.activeTabText]}>Today's Transactions</Text>
+                </TouchableOpacity>
             </View>
 
             <View style={styles.contentContainer}>
-                {activeTab === 'Products' && <ProductsTab />}
-                {activeTab === 'Categories' && <CategoriesTab />}
-                {activeTab === 'Ingredients' && <IngredientsTab />}
+                {activeTab === 'Products' && <ProductsTab key={`products-${syncTrigger}`} />}
+                {activeTab === 'Categories' && <CategoriesTab key={`categories-${syncTrigger}`} />}
+                {activeTab === 'Ingredients' && <IngredientsTab key={`ingredients-${syncTrigger}`} />}
+                {activeTab === 'Transactions' && <TransactionsTab key={`transactions-${syncTrigger}`} />}
             </View>
         </View>
     );
