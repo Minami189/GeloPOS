@@ -21,6 +21,10 @@ export default function POSScreen() {
     const [orderComplete, setOrderComplete] = useState(false);
     const [lastOrderId, setLastOrderId] = useState(null);
 
+    // Low-stock warning state
+    const [stockWarningVisible, setStockWarningVisible] = useState(false);
+    const [stockWarnings, setStockWarnings] = useState([]);
+
     useEffect(() => {
         loadProducts();
         loadCategories();
@@ -122,6 +126,40 @@ export default function POSScreen() {
             return;
         }
 
+        try {
+            const db = await getDBConnection();
+
+            // --- Check if any ingredient will go negative ---
+            const warnings = [];
+            for (let item of cart) {
+                let recs;
+                if (item.variant) {
+                    recs = await db.getAllAsync('SELECT r.*, i.name as ing_name, i.stock_quantity, i.unit FROM recipes r JOIN ingredients i ON r.ingredient_id = i.id WHERE r.product_id = ? AND r.variant_id = ?', item.product.id, item.variant.id);
+                } else {
+                    recs = await db.getAllAsync('SELECT r.*, i.name as ing_name, i.stock_quantity, i.unit FROM recipes r JOIN ingredients i ON r.ingredient_id = i.id WHERE r.product_id = ? AND r.variant_id IS NULL', item.product.id);
+                }
+                for (let r of recs) {
+                    const totalUsed = r.quantity * item.quantity;
+                    const remaining = r.stock_quantity - totalUsed;
+                    if (remaining < 0) {
+                        warnings.push(`⚠️ ${r.ing_name} (for ${item.product.name}${item.variant ? ` - ${item.variant.name}` : ''}): only ${r.stock_quantity} ${r.unit} left, needs ${totalUsed} ${r.unit}`);
+                    }
+                }
+            }
+
+            if (warnings.length > 0) {
+                setStockWarnings(warnings);
+                setStockWarningVisible(true);
+                return; // Pause here — wait for cashier to decide
+            }
+
+            await confirmSubmitOrder();
+        } catch (e) { console.error("Failed to check stock", e); }
+    };
+
+    const confirmSubmitOrder = async () => {
+        setStockWarningVisible(false);
+        const cash = parseFloat(cashReceived) || 0;
         try {
             const db = await getDBConnection();
             const trimmedName = customerName.trim() || null;
@@ -282,6 +320,38 @@ export default function POSScreen() {
                     </TouchableOpacity>
                 </View>
             </View>
+
+            {/* Low-Stock Warning Modal */}
+            <Modal visible={stockWarningVisible} transparent animationType="fade">
+                <View style={styles.modalOverlay}>
+                    <View style={styles.warningModal}>
+                        <Text style={styles.warningTitle}>⚠️ Low Stock Warning</Text>
+                        <Text style={styles.warningSubtitle}>The following ingredients are insufficient for this order:</Text>
+                        <ScrollView style={{ maxHeight: 200, marginVertical: 15 }}>
+                            {stockWarnings.map((w, i) => (
+                                <View key={i} style={styles.warningItem}>
+                                    <Text style={styles.warningItemText}>{w}</Text>
+                                </View>
+                            ))}
+                        </ScrollView>
+                        <Text style={styles.warningQuestion}>Do you want to continue anyway?</Text>
+                        <View style={styles.warningActions}>
+                            <TouchableOpacity
+                                style={styles.warnCancelBtn}
+                                onPress={() => setStockWarningVisible(false)}
+                            >
+                                <Text style={styles.warnCancelText}>Cancel Order</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.warnContinueBtn}
+                                onPress={confirmSubmitOrder}
+                            >
+                                <Text style={styles.warnContinueText}>Continue Anyway</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
 
             {/* Variant Modal */}
             <Modal visible={variantModalVisible} transparent animationType="fade">
@@ -444,6 +514,19 @@ const styles = StyleSheet.create({
     variantModal: { width: 350, backgroundColor: '#fff', borderRadius: 12, padding: 25 },
     variantItem: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 15, borderBottomWidth: 1, borderColor: '#f3f4f6' },
     variantItemText: { fontSize: 16, fontWeight: '500', color: '#374151' },
+
+    // Warning Modal
+    warningModal: { width: 460, backgroundColor: '#fff', borderRadius: 16, padding: 30, elevation: 10 },
+    warningTitle: { fontSize: 22, fontWeight: 'bold', color: '#b45309', marginBottom: 6 },
+    warningSubtitle: { fontSize: 14, color: '#6b7280', marginBottom: 4 },
+    warningItem: { backgroundColor: '#fef3c7', borderRadius: 8, padding: 10, marginBottom: 8, borderLeftWidth: 3, borderLeftColor: '#f59e0b' },
+    warningItemText: { fontSize: 13, color: '#92400e' },
+    warningQuestion: { fontSize: 15, fontWeight: '600', color: '#374151', marginTop: 5, textAlign: 'center' },
+    warningActions: { flexDirection: 'row', gap: 12, marginTop: 20, justifyContent: 'center' },
+    warnCancelBtn: { flex: 1, paddingVertical: 14, borderRadius: 10, borderWidth: 1.5, borderColor: '#d1d5db', alignItems: 'center' },
+    warnCancelText: { fontWeight: 'bold', color: '#374151', fontSize: 15 },
+    warnContinueBtn: { flex: 1, paddingVertical: 14, borderRadius: 10, backgroundColor: '#f59e0b', alignItems: 'center' },
+    warnContinueText: { fontWeight: 'bold', color: '#fff', fontSize: 15 },
 
     paymentModal: { width: 500, backgroundColor: '#fff', borderRadius: 16, padding: 35, elevation: 10 },
     modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 25 },
