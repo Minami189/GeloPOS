@@ -99,17 +99,17 @@ export const syncCatalogToSupabase = async () => {
                             const fileName = rest.image_uri.split('/').pop();
                             const fileExt = fileName.split('.').pop() || 'jpg';
                             const mimeType = fileExt.toLowerCase() === 'png' ? 'image/png' : 'image/jpeg';
-                            
+
                             // 1. Read local file as Base64 string
                             const base64File = await FileSystem.readAsStringAsync(rest.image_uri, {
                                 encoding: FileSystem.EncodingType.Base64,
                             });
-                            
+
                             // 2. Decode Base64 string to ArrayBuffer (Required for Supabase RN upload)
                             const arrayBuffer = decode(base64File);
 
                             const bucketPath = `products/${Date.now()}_${fileName}`;
-                            
+
                             // 3. Upload ArrayBuffer
                             const { data: uploadData, error: uploadError } = await supabase.storage
                                 .from('product_images')
@@ -118,14 +118,14 @@ export const syncCatalogToSupabase = async () => {
                                     cacheControl: '3600',
                                     upsert: false
                                 });
-                                
+
                             if (uploadError) {
                                 console.error("Image upload failed, continuing without cloud image", uploadError);
                             } else {
                                 const { data: publicUrlData } = supabase.storage
                                     .from('product_images')
                                     .getPublicUrl(bucketPath);
-                                    
+
                                 rest.image_uri = publicUrlData.publicUrl;
                                 // update local db with public URL
                                 await db.runAsync('UPDATE products SET image_uri = ? WHERE id = ?', rest.image_uri, rest.id);
@@ -238,9 +238,9 @@ export const fetchDataFromSupabase = async () => {
         }
 
         if (hasUnsynced) {
-            return { 
-                success: false, 
-                error: "You have unsynced local items. Please press 'Sync to Online' first to push your changes and prevent ID conflicts." 
+            return {
+                success: false,
+                error: "You have unsynced local items. Please press 'Sync to Online' first to push your changes and prevent ID conflicts."
             };
         }
 
@@ -261,13 +261,13 @@ export const fetchDataFromSupabase = async () => {
                     // Prepare columns and values dynamically based on remote object keys
                     const keys = Object.keys(remoteItem);
                     const values = Object.values(remoteItem);
-                    
+
                     // Add 'synced = 1' since this comes directly from Supabase
                     keys.push('synced');
                     values.push(1);
 
                     const placeholders = keys.map(() => '?').join(', ');
-                    
+
                     // Don't let a null image from the cloud overwrite a local image during upsert
                     let updateStr = keys.map(k => `${k}=excluded.${k}`).join(', ');
                     if (tableDef.local === 'products' && !remoteItem.image_uri) {
@@ -299,7 +299,7 @@ export const fetchDataFromSupabase = async () => {
 export const fetchOrdersFromSupabase = async () => {
     try {
         const db = await getDBConnection();
-        
+
         // Fetch Orders
         const { data: ordersData, error: ordersError } = await supabase.from('pos_orders').select('*');
         if (ordersError) throw ordersError;
@@ -323,13 +323,13 @@ export const fetchOrdersFromSupabase = async () => {
                         cash_received=excluded.cash_received,
                         change_amount=excluded.change_amount,
                         status=excluded.status
-                `, 
-                targetId, 
-                totalAmount, 
-                cashReceived, 
-                changeAmount, 
-                status, 
-                createdAt
+                `,
+                    targetId,
+                    totalAmount,
+                    cashReceived,
+                    changeAmount,
+                    status,
+                    createdAt
                 );
             }
             fetchedCount = ordersData.length;
@@ -343,10 +343,22 @@ export const fetchOrdersFromSupabase = async () => {
             for (const item of itemsData) {
                 const orderId = parseInt(item.local_order_id || item.supabase_order_id, 10);
                 const itemId = parseInt(item.id, 10);
-                const productId = item.product_id ? parseInt(item.product_id, 10) : null;
-                const variantId = item.variant_id ? parseInt(item.variant_id, 10) : null;
+                let productId = item.product_id ? parseInt(item.product_id, 10) : null;
+                let variantId = item.variant_id ? parseInt(item.variant_id, 10) : null;
                 const quantity = parseInt(item.quantity || 1, 10);
                 const price = parseFloat(item.price_at_time || 0);
+
+                // Check if product exists to avoid FK error
+                if (productId) {
+                    const pExists = await db.getFirstAsync('SELECT id FROM products WHERE id = ?', productId);
+                    if (!pExists) productId = null;
+                }
+
+                // Check if variant exists to avoid FK error
+                if (variantId) {
+                    const vExists = await db.getFirstAsync('SELECT id FROM product_variants WHERE id = ?', variantId);
+                    if (!vExists) variantId = null;
+                }
 
                 // Basic insert for order items. Assuming item.id from supabase can map directly.
                 await db.runAsync(`
@@ -354,14 +366,16 @@ export const fetchOrdersFromSupabase = async () => {
                     VALUES (?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         quantity=excluded.quantity,
-                        price_at_time=excluded.price_at_time
-                `, 
-                itemId, 
-                orderId, 
-                productId, 
-                variantId, 
-                quantity, 
-                price
+                        price_at_time=excluded.price_at_time,
+                        product_id=excluded.product_id,
+                        variant_id=excluded.variant_id
+                `,
+                    itemId,
+                    orderId,
+                    productId,
+                    variantId,
+                    quantity,
+                    price
                 );
             }
         }

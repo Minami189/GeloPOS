@@ -55,12 +55,12 @@ export default function AnalyticsScreen() {
 
             // Demo Chart Data - getting sales by product for bar chart
             const productSalesRes = await db.getAllAsync(`
-                SELECT p.name, SUM(oi.quantity * oi.price_at_time) as total_sales
+                SELECT COALESCE(p.name, 'Deleted Product') as name, SUM(oi.quantity * oi.price_at_time) as total_sales
                 FROM order_items oi
                 JOIN orders o ON oi.order_id = o.id
-                JOIN products p ON oi.product_id = p.id
+                LEFT JOIN products p ON oi.product_id = p.id
                 WHERE o.status = 'Completed' ${dateCondition.replace('created_at', 'o.created_at')}
-                GROUP BY p.name
+                GROUP BY name
                 ORDER BY total_sales DESC
                 LIMIT 5
             `);
@@ -121,13 +121,13 @@ export default function AnalyticsScreen() {
                         totalRevenue: salesSummary.totalRevenue
                     })
                 });
-                
+
                 if (!response.ok) {
-                     setAiSuggestions("Unable to generate suggestions. The AI service returned an error.");
-                     setIsAiLoading(false);
-                     return;
+                    setAiSuggestions("Unable to generate suggestions. The AI service returned an error.");
+                    setIsAiLoading(false);
+                    return;
                 }
-                
+
                 try {
                     const data = await response.json();
                     setAiSuggestions(data.suggestion || "Try offering discounts on your highest-selling items to boost volume.");
@@ -135,7 +135,7 @@ export default function AnalyticsScreen() {
                     console.error("AI JSON Parse Failed", jsonErr);
                     setAiSuggestions("Received invalid response format from the AI Service.");
                 }
-                
+
             } else {
                 // Simulated response for demo
                 setTimeout(() => {
@@ -167,77 +167,77 @@ export default function AnalyticsScreen() {
         <AdminAuthGate>
             <ScrollView style={styles.container}>
                 <View style={styles.header}>
-                <Text style={styles.title}>Sales Analytics</Text>
-                <View style={{ flexDirection: 'row', gap: 10 }}>
-                    <TouchableOpacity style={[styles.syncBtn, { backgroundColor: '#8b5cf6' }]} onPress={handleFetch} disabled={isFetching || isSyncing}>
-                        {isFetching ? <ActivityIndicator size="small" color="#fff" /> : <DownloadCloud color="#fff" size={20} />}
-                        <Text style={styles.syncBtnText}>{isFetching ? 'Fetching...' : 'Fetch All'}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.syncBtn} onPress={handleSync} disabled={isSyncing || isFetching}>
-                        {isSyncing ? <ActivityIndicator size="small" color="#fff" /> : <RefreshCw color="#fff" size={20} />}
-                        <Text style={styles.syncBtnText}>{isSyncing ? 'Syncing...' : 'Sync to Supabase'}</Text>
-                    </TouchableOpacity>
-                </View>
-            </View>
-
-            <View style={styles.filterContainer}>
-                {['All Time', 'Today', 'This Month'].map(period => (
-                    <TouchableOpacity
-                        key={period}
-                        style={[styles.filterBtn, filterPeriod === period && styles.filterBtnActive]}
-                        onPress={() => setFilterPeriod(period)}
-                    >
-                        <Text style={[styles.filterBtnText, filterPeriod === period && styles.filterBtnTextActive]}>{period}</Text>
-                    </TouchableOpacity>
-                ))}
-            </View>
-
-            <View style={styles.summaryContainer}>
-                <View style={styles.summaryCard}>
-                    <Text style={styles.summaryLabel}>Total Revenue</Text>
-                    <Text style={styles.summaryValue}>₱{salesSummary.totalRevenue.toFixed(2)}</Text>
-                </View>
-                <View style={styles.summaryCard}>
-                    <Text style={styles.summaryLabel}>Total Orders</Text>
-                    <Text style={styles.summaryValue}>{salesSummary.totalOrders}</Text>
-                </View>
-                <View style={styles.summaryCard}>
-                    <Text style={styles.summaryLabel}>Avg Order Value</Text>
-                    <Text style={styles.summaryValue}>₱{salesSummary.avgOrderValue.toFixed(2)}</Text>
-                </View>
-            </View>
-
-            <View style={styles.chartContainer}>
-                <Text style={styles.chartTitle}>Top Products Revenue</Text>
-                <BarChart
-                    data={{ labels: chartData.labels, datasets: [{ data: chartData.data }] }}
-                    width={screenWidth * 0.7}
-                    height={280}
-                    yAxisLabel="₱"
-                    chartConfig={chartConfig}
-                    style={{ marginVertical: 8, borderRadius: 16 }}
-                />
-            </View>
-
-            <View style={styles.aiContainer}>
-                <View style={styles.aiHeader}>
-                    <Sparkles color="#8b5cf6" size={24} />
-                    <Text style={styles.aiTitle}>AI Store Suggestions</Text>
-                </View>
-
-                {aiSuggestions ? (
-                    <View style={styles.aiResultBox}>
-                        <Text style={styles.aiResultText}>{aiSuggestions}</Text>
+                    <Text style={styles.title}>Sales Analytics</Text>
+                    <View style={{ flexDirection: 'row', gap: 10 }}>
+                        <TouchableOpacity style={[styles.syncBtn, { backgroundColor: '#8b5cf6' }]} onPress={handleFetch} disabled={isFetching || isSyncing}>
+                            {isFetching ? <ActivityIndicator size="small" color="#fff" /> : <DownloadCloud color="#fff" size={20} />}
+                            <Text style={styles.syncBtnText}>{isFetching ? 'Fetching...' : 'Fetch All'}</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.syncBtn} onPress={handleSync} disabled={isSyncing || isFetching}>
+                            {isSyncing ? <ActivityIndicator size="small" color="#fff" /> : <RefreshCw color="#fff" size={20} />}
+                            <Text style={styles.syncBtnText}>{isSyncing ? 'Syncing...' : 'Sync to Supabase'}</Text>
+                        </TouchableOpacity>
                     </View>
-                ) : (
-                    <Text style={styles.aiPlaceholder}>Get actionable insights based on your recent sales data.</Text>
-                )}
+                </View>
 
-                <TouchableOpacity style={styles.aiBtn} onPress={generateAiSuggestions} disabled={isAiLoading}>
-                    {isAiLoading ? <ActivityIndicator size="small" color="#fff" /> : <TrendingUp color="#fff" size={20} />}
-                    <Text style={styles.aiBtnText}>Generate Insights</Text>
-                </TouchableOpacity>
-            </View>
+                <View style={styles.filterContainer}>
+                    {['All Time', 'Today', 'This Month'].map(period => (
+                        <TouchableOpacity
+                            key={period}
+                            style={[styles.filterBtn, filterPeriod === period && styles.filterBtnActive]}
+                            onPress={() => setFilterPeriod(period)}
+                        >
+                            <Text style={[styles.filterBtnText, filterPeriod === period && styles.filterBtnTextActive]}>{period}</Text>
+                        </TouchableOpacity>
+                    ))}
+                </View>
+
+                <View style={styles.summaryContainer}>
+                    <View style={styles.summaryCard}>
+                        <Text style={styles.summaryLabel}>Total Revenue</Text>
+                        <Text style={styles.summaryValue}>₱{salesSummary.totalRevenue.toFixed(2)}</Text>
+                    </View>
+                    <View style={styles.summaryCard}>
+                        <Text style={styles.summaryLabel}>Total Orders</Text>
+                        <Text style={styles.summaryValue}>{salesSummary.totalOrders}</Text>
+                    </View>
+                    <View style={styles.summaryCard}>
+                        <Text style={styles.summaryLabel}>Avg Order Value</Text>
+                        <Text style={styles.summaryValue}>₱{salesSummary.avgOrderValue.toFixed(2)}</Text>
+                    </View>
+                </View>
+
+                <View style={styles.chartContainer}>
+                    <Text style={styles.chartTitle}>Top Products Revenue</Text>
+                    <BarChart
+                        data={{ labels: chartData.labels, datasets: [{ data: chartData.data }] }}
+                        width={screenWidth * 0.7}
+                        height={280}
+                        yAxisLabel="₱"
+                        chartConfig={chartConfig}
+                        style={{ marginVertical: 8, borderRadius: 16 }}
+                    />
+                </View>
+
+                <View style={styles.aiContainer}>
+                    <View style={styles.aiHeader}>
+                        <Sparkles color="#8b5cf6" size={24} />
+                        <Text style={styles.aiTitle}>AI Store Suggestions</Text>
+                    </View>
+
+                    {aiSuggestions ? (
+                        <View style={styles.aiResultBox}>
+                            <Text style={styles.aiResultText}>{aiSuggestions}</Text>
+                        </View>
+                    ) : (
+                        <Text style={styles.aiPlaceholder}>Get actionable insights based on your recent sales data.</Text>
+                    )}
+
+                    <TouchableOpacity style={styles.aiBtn} onPress={generateAiSuggestions} disabled={isAiLoading}>
+                        {isAiLoading ? <ActivityIndicator size="small" color="#fff" /> : <TrendingUp color="#fff" size={20} />}
+                        <Text style={styles.aiBtnText}>Generate Insights</Text>
+                    </TouchableOpacity>
+                </View>
 
             </ScrollView>
         </AdminAuthGate>

@@ -101,7 +101,7 @@ export default function ProductsTab() {
 
     const handleAddRecipeIngredient = () => {
         if (ingredientsList.length > 0) {
-            setRecipes([...recipes, { ingredient_id: ingredientsList[0].id, quantity: 1 }]);
+            setRecipes([...recipes, { ingredient_id: parseInt(ingredientsList[0].id, 10), quantity: 1 }]);
         }
     };
 
@@ -113,7 +113,7 @@ export default function ProductsTab() {
 
     const updateRecipeIngredient = (index, id) => {
         let newRecipes = [...recipes];
-        newRecipes[index].ingredient_id = parseInt(id, 10);
+        newRecipes[index].ingredient_id = Number(id);
         setRecipes(newRecipes);
     };
 
@@ -131,43 +131,109 @@ export default function ProductsTab() {
             return;
         }
 
+        // Validate that all recipe ingredient IDs are valid numbers
+        for (const r of recipes) {
+            const ingId = Number(r.ingredient_id);
+            if (!ingId || isNaN(ingId)) {
+                Alert.alert("Validation", "One or more recipe ingredients is invalid. Please re-select the ingredient.");
+                return;
+            }
+        }
+
         try {
             const db = await getDBConnection();
 
+            // Validate Category if set
+            if (categoryId) {
+                const catExists = await db.getFirstAsync('SELECT id FROM categories WHERE id = ?', categoryId);
+                if (!catExists) {
+                    Alert.alert("Error", `Selected category does not exist. Please re-select.`);
+                    return;
+                }
+            }
+
+            // Verify every ingredient_id actually exists in the DB before inserting
+            for (const r of recipes) {
+                const ingId = Number(r.ingredient_id);
+                const exists = await db.getFirstAsync('SELECT id FROM ingredients WHERE id = ?', ingId);
+                if (!exists) {
+                    Alert.alert("Error", `Ingredient with ID ${ingId} was not found in the database. Please remove it and re-add it.`);
+                    return;
+                }
+            }
+
             if (editingItem) {
-                await db.runAsync(
-                    'UPDATE products SET name = ?, price = ?, category_id = ?, image_uri = ?, status = ? WHERE id = ?',
-                    name, parseFloat(price), categoryId || null, imageUri, status, editingItem.id
-                );
-                // simplified mapping update for variants / recipes (ideally delete and re-insert)
-                await db.runAsync('DELETE FROM product_variants WHERE product_id = ?', editingItem.id);
-                await db.runAsync('DELETE FROM recipes WHERE product_id = ? AND variant_id IS NULL', editingItem.id);
+                try {
+                    await db.runAsync(
+                        'UPDATE products SET name = ?, price = ?, category_id = ?, image_uri = ?, status = ? WHERE id = ?',
+                        name, parseFloat(price), categoryId || null, imageUri, status, editingItem.id
+                    );
+                } catch (e) {
+                    throw new Error("Failed to update product details: " + e.message);
+                }
+
+                // Disconnect foreign keys from historical orders BEFORE wiping variants
+                try {
+                    await db.runAsync(`UPDATE order_items SET variant_id = NULL WHERE variant_id IN (SELECT id FROM product_variants WHERE product_id = ?)`, editingItem.id);
+                } catch (e) {
+                    throw new Error("Failed to disconnect old variants from orders: " + e.message);
+                }
+
+                try {
+                    // Delete and re-insert variants / recipes
+                    await db.runAsync('DELETE FROM product_variants WHERE product_id = ?', editingItem.id);
+                    await db.runAsync('DELETE FROM recipes WHERE product_id = ? AND variant_id IS NULL', editingItem.id);
+                } catch (e) {
+                    throw new Error("Failed to wipe old variants and recipes: " + e.message);
+                }
 
                 for (let v of variants) {
-                    await db.runAsync('INSERT INTO product_variants (product_id, name) VALUES (?, ?)', editingItem.id, v.name);
+                    try {
+                        await db.runAsync('INSERT INTO product_variants (product_id, name) VALUES (?, ?)', editingItem.id, v.name);
+                    } catch (e) {
+                        throw new Error(`Failed to insert variant ${v.name}: ` + e.message);
+                    }
                 }
                 for (let r of recipes) {
-                    await db.runAsync('INSERT INTO recipes (product_id, ingredient_id, quantity) VALUES (?, ?, ?)', editingItem.id, r.ingredient_id, r.quantity);
+                    try {
+                        await db.runAsync('INSERT INTO recipes (product_id, ingredient_id, quantity) VALUES (?, ?, ?)', editingItem.id, Number(r.ingredient_id), r.quantity);
+                    } catch (e) {
+                        throw new Error(`Failed to insert recipe for ingredient ID ${r.ingredient_id}: ` + e.message);
+                    }
                 }
 
             } else {
-                const result = await db.runAsync(
-                    'INSERT INTO products (name, price, category_id, image_uri, status) VALUES (?, ?, ?, ?, ?)',
-                    name, parseFloat(price), categoryId || null, imageUri, status
-                );
+                let newProductId;
+                try {
+                    const result = await db.runAsync(
+                        'INSERT INTO products (name, price, category_id, image_uri, status) VALUES (?, ?, ?, ?, ?)',
+                        name, parseFloat(price), categoryId || null, imageUri, status
+                    );
+                    newProductId = result.lastInsertRowId;
+                } catch (e) {
+                    throw new Error("Failed to create new product: " + e.message);
+                }
 
-                const newProductId = result.lastInsertRowId;
                 for (let v of variants) {
-                    await db.runAsync('INSERT INTO product_variants (product_id, name) VALUES (?, ?)', newProductId, v.name);
+                    try {
+                        await db.runAsync('INSERT INTO product_variants (product_id, name) VALUES (?, ?)', newProductId, v.name);
+                    } catch (e) {
+                        throw new Error(`Failed to insert variant ${v.name}: ` + e.message);
+                    }
                 }
                 for (let r of recipes) {
-                    await db.runAsync('INSERT INTO recipes (product_id, ingredient_id, quantity) VALUES (?, ?, ?)', newProductId, r.ingredient_id, r.quantity);
+                    try {
+                        await db.runAsync('INSERT INTO recipes (product_id, ingredient_id, quantity) VALUES (?, ?, ?)', newProductId, Number(r.ingredient_id), r.quantity);
+                    } catch (e) {
+                        throw new Error(`Failed to insert recipe for ingredient ID ${r.ingredient_id} on new product: ` + e.message);
+                    }
                 }
             }
             closeModal();
             loadData();
         } catch (error) {
             console.error("Failed to save product", error);
+            Alert.alert("Save Failed", error.message || "An unknown error occurred while saving the product.");
         }
     };
 
@@ -209,6 +275,14 @@ export default function ProductsTab() {
     const openModal = async (item = null) => {
         try {
             const db = await getDBConnection();
+
+            // Always reload ingredients and categories fresh so newly-added ones are available
+            const freshIngredients = await db.getAllAsync('SELECT * FROM ingredients ORDER BY name ASC');
+            setIngredientsList(freshIngredients || []);
+            
+            const freshCategories = await db.getAllAsync('SELECT * FROM categories');
+            setCategories(freshCategories || []);
+
             if (item) {
                 setEditingItem(item);
                 setName(item.name);
@@ -221,7 +295,8 @@ export default function ProductsTab() {
                 const recs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id IS NULL', item.id);
 
                 setVariants(vars || []);
-                setRecipes(recs || []);
+                // Ensure ingredient_ids are proper numbers when loading from DB
+                setRecipes((recs || []).map(r => ({ ...r, ingredient_id: Number(r.ingredient_id) })));
             } else {
                 setEditingItem(null);
                 setName('');
