@@ -22,7 +22,7 @@ export default function IngredientsTab() {
     const loadIngredients = async () => {
         try {
             const db = await getDBConnection();
-            const result = await db.getAllAsync('SELECT * FROM ingredients ORDER BY name ASC');
+            const result = await db.getAllAsync('SELECT * FROM ingredients WHERE deleted_at IS NULL ORDER BY name ASC');
             setIngredients(result || []);
         } catch (error) {
             console.error("Failed to load ingredients", error);
@@ -63,8 +63,7 @@ export default function IngredientsTab() {
                     onPress: async () => {
                         try {
                             const db = await getDBConnection();
-                            await db.runAsync('DELETE FROM ingredients WHERE id = ?', id);
-                            await deleteRecordFromSupabase('pos_ingredients', id);
+                            await db.runAsync('UPDATE ingredients SET deleted_at = CURRENT_TIMESTAMP, synced = 0 WHERE id = ?', id);
                             loadIngredients();
                         } catch (error) {
                             console.error("Failed to delete", error);

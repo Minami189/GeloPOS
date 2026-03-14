@@ -283,6 +283,9 @@ export const fetchDataFromSupabase = async () => {
                 }
                 totalDownloaded += data.length;
             }
+
+            // --- Reconcile: Hard delete any rows that are marked as deleted in the cloud ---
+            await db.runAsync(`DELETE FROM ${tableDef.local} WHERE deleted_at IS NOT NULL`);
         }
 
         return { success: true, count: totalDownloaded, message: `Successfully fetched ${totalDownloaded} master records from cloud.` };

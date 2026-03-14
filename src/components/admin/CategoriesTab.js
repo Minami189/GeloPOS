@@ -18,7 +18,7 @@ export default function CategoriesTab() {
     const loadCategories = async () => {
         try {
             const db = await getDBConnection();
-            const result = await db.getAllAsync('SELECT * FROM categories ORDER BY name ASC');
+            const result = await db.getAllAsync('SELECT * FROM categories WHERE deleted_at IS NULL ORDER BY name ASC');
             setCategories(result || []);
         } catch (error) {
             console.error("Failed to load categories", error);
@@ -56,13 +56,10 @@ export default function CategoriesTab() {
 
                             // Detach products linked to this category to prevent FK constraint failures
                             await db.runAsync('UPDATE products SET category_id = NULL WHERE category_id = ?', id);
-                            await db.runAsync('DELETE FROM categories WHERE id = ?', id);
+                            
+                            // Soft delete 
+                            await db.runAsync('UPDATE categories SET deleted_at = CURRENT_TIMESTAMP, synced = 0 WHERE id = ?', id);
 
-                            try {
-                                await supabase.from('pos_products').update({ category_id: null }).eq('category_id', id);
-                            } catch (err) {}
-
-                            await deleteRecordFromSupabase('pos_categories', id);
                             loadCategories();
                         } catch (error) {
                             console.error("Failed to delete category", error);

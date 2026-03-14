@@ -115,6 +115,21 @@ export const initDB = async () => {
             console.error('Migration error for orders customer_name:', err);
         }
 
+        // --- Migration: Add 'deleted_at' column to syncable tables if missing ---
+        for (const table of tablesToUpdate) {
+            try {
+                const result = await db.getAllAsync(`PRAGMA table_info(${table})`);
+                const hasDeletedAtColumn = result.some(col => col.name === 'deleted_at');
+
+                if (!hasDeletedAtColumn) {
+                    await db.execAsync(`ALTER TABLE ${table} ADD COLUMN deleted_at TEXT DEFAULT NULL;`);
+                    console.log(`Added 'deleted_at' column to ${table} table`);
+                }
+            } catch (err) {
+                console.error(`Migration error for ${table} deleted_at:`, err);
+            }
+        }
+
         console.log("Database initialized successfully.");
     } catch (e) {
         console.error("Database initialization error:", e);

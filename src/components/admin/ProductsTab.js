@@ -67,9 +67,9 @@ export default function ProductsTab() {
     const loadData = async () => {
         try {
             const db = await getDBConnection();
-            const prodRes = await db.getAllAsync('SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id');
-            const catRes = await db.getAllAsync('SELECT * FROM categories');
-            const ingRes = await db.getAllAsync('SELECT * FROM ingredients');
+            const prodRes = await db.getAllAsync('SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id WHERE p.deleted_at IS NULL');
+            const catRes = await db.getAllAsync('SELECT * FROM categories WHERE deleted_at IS NULL');
+            const ingRes = await db.getAllAsync('SELECT * FROM ingredients WHERE deleted_at IS NULL');
 
             setProducts(prodRes || []);
             setCategories(catRes || []);
@@ -252,16 +252,12 @@ export default function ProductsTab() {
                             
                             // Prevent Foreign Key constraint failures by detaching in SQLite
                             await db.runAsync('UPDATE order_items SET product_id = NULL, variant_id = NULL WHERE product_id = ?', id);
-                            await db.runAsync('DELETE FROM products WHERE id = ?', id);
                             
-                            // Detach in Supabase, ignore if error
-                            try {
-                                await supabase.from('pos_order_items')
-                                    .update({ product_id: null, variant_id: null })
-                                    .eq('product_id', id);
-                            } catch (err) {}
-
-                            await deleteRecordFromSupabase('pos_products', id);
+                            // Soft delete to track offline
+                            await db.runAsync('UPDATE products SET deleted_at = CURRENT_TIMESTAMP, synced = 0 WHERE id = ?', id);
+                            
+                            // Let syncService handle updating Supabase
+                            
                             loadData();
                         } catch (error) {
                             console.error("Failed to delete product", error);
@@ -277,10 +273,10 @@ export default function ProductsTab() {
             const db = await getDBConnection();
 
             // Always reload ingredients and categories fresh so newly-added ones are available
-            const freshIngredients = await db.getAllAsync('SELECT * FROM ingredients ORDER BY name ASC');
+            const freshIngredients = await db.getAllAsync('SELECT * FROM ingredients WHERE deleted_at IS NULL ORDER BY name ASC');
             setIngredientsList(freshIngredients || []);
             
-            const freshCategories = await db.getAllAsync('SELECT * FROM categories');
+            const freshCategories = await db.getAllAsync('SELECT * FROM categories WHERE deleted_at IS NULL');
             setCategories(freshCategories || []);
 
             if (item) {
