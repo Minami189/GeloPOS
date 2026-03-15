@@ -94,9 +94,21 @@ export default function ProductsTab() {
 
     const handleAddVariant = () => {
         if (newVariant.trim()) {
-            setVariants([...variants, { name: newVariant.trim() }]);
+            setVariants([...variants, { name: newVariant.trim(), ingredient_id: null, quantity: 1 }]);
             setNewVariant('');
         }
+    };
+
+    const updateVariantIngredient = (index, id) => {
+        let newVars = [...variants];
+        newVars[index].ingredient_id = id ? Number(id) : null;
+        setVariants(newVars);
+    };
+
+    const updateVariantQuantity = (index, val) => {
+        let newVars = [...variants];
+        newVars[index].quantity = parseFloat(val) || 1;
+        setVariants(newVars);
     };
 
     const handleAddRecipeIngredient = () => {
@@ -182,14 +194,17 @@ export default function ProductsTab() {
                 try {
                     // Delete and re-insert variants / recipes
                     await db.runAsync('DELETE FROM product_variants WHERE product_id = ?', editingItem.id);
-                    await db.runAsync('DELETE FROM recipes WHERE product_id = ? AND variant_id IS NULL', editingItem.id);
+                    await db.runAsync('DELETE FROM recipes WHERE product_id = ?', editingItem.id);
                 } catch (e) {
                     throw new Error("Failed to wipe old variants and recipes: " + e.message);
                 }
 
                 for (let v of variants) {
                     try {
-                        await db.runAsync('INSERT INTO product_variants (product_id, name) VALUES (?, ?)', editingItem.id, v.name);
+                        const varRes = await db.runAsync('INSERT INTO product_variants (product_id, name) VALUES (?, ?)', editingItem.id, v.name);
+                        if (v.ingredient_id) {
+                            await db.runAsync('INSERT INTO recipes (product_id, variant_id, ingredient_id, quantity) VALUES (?, ?, ?, ?)', editingItem.id, varRes.lastInsertRowId, Number(v.ingredient_id), v.quantity || 1);
+                        }
                     } catch (e) {
                         throw new Error(`Failed to insert variant ${v.name}: ` + e.message);
                     }
@@ -216,7 +231,10 @@ export default function ProductsTab() {
 
                 for (let v of variants) {
                     try {
-                        await db.runAsync('INSERT INTO product_variants (product_id, name) VALUES (?, ?)', newProductId, v.name);
+                        const varRes = await db.runAsync('INSERT INTO product_variants (product_id, name) VALUES (?, ?)', newProductId, v.name);
+                        if (v.ingredient_id) {
+                            await db.runAsync('INSERT INTO recipes (product_id, variant_id, ingredient_id, quantity) VALUES (?, ?, ?, ?)', newProductId, varRes.lastInsertRowId, Number(v.ingredient_id), v.quantity || 1);
+                        }
                     } catch (e) {
                         throw new Error(`Failed to insert variant ${v.name}: ` + e.message);
                     }
@@ -243,21 +261,21 @@ export default function ProductsTab() {
             "Are you sure you want to delete this product? This will also delete it from the Cloud database.",
             [
                 { text: "Cancel", style: "cancel" },
-                { 
-                    text: "Delete", 
+                {
+                    text: "Delete",
                     style: "destructive",
                     onPress: async () => {
                         try {
                             const db = await getDBConnection();
-                            
+
                             // Prevent Foreign Key constraint failures by detaching in SQLite
                             await db.runAsync('UPDATE order_items SET product_id = NULL, variant_id = NULL WHERE product_id = ?', id);
-                            
+
                             // Soft delete to track offline
                             await db.runAsync('UPDATE products SET deleted_at = CURRENT_TIMESTAMP, synced = 0 WHERE id = ?', id);
-                            
+
                             // Let syncService handle updating Supabase
-                            
+
                             loadData();
                         } catch (error) {
                             console.error("Failed to delete product", error);
@@ -275,7 +293,7 @@ export default function ProductsTab() {
             // Always reload ingredients and categories fresh so newly-added ones are available
             const freshIngredients = await db.getAllAsync('SELECT * FROM ingredients WHERE deleted_at IS NULL ORDER BY name ASC');
             setIngredientsList(freshIngredients || []);
-            
+
             const freshCategories = await db.getAllAsync('SELECT * FROM categories WHERE deleted_at IS NULL');
             setCategories(freshCategories || []);
 
@@ -289,8 +307,18 @@ export default function ProductsTab() {
 
                 const vars = await db.getAllAsync('SELECT * FROM product_variants WHERE product_id = ?', item.id);
                 const recs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id IS NULL', item.id);
+                const varRecs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id IS NOT NULL', item.id);
 
-                setVariants(vars || []);
+                const loadedVariants = (vars || []).map(v => {
+                    const vr = (varRecs || []).find(r => r.variant_id === v.id);
+                    return {
+                        ...v,
+                        ingredient_id: vr ? Number(vr.ingredient_id) : null,
+                        quantity: vr ? vr.quantity : 1
+                    };
+                });
+
+                setVariants(loadedVariants);
                 // Ensure ingredient_ids are proper numbers when loading from DB
                 setRecipes((recs || []).map(r => ({ ...r, ingredient_id: Number(r.ingredient_id) })));
             } else {
@@ -403,12 +431,31 @@ export default function ProductsTab() {
                                     <Plus color="#fff" size={20} />
                                 </TouchableOpacity>
                             </View>
-                            <View style={styles.badgesContainer}>
+                            <View style={{ marginTop: 10 }}>
                                 {variants.map((v, i) => (
-                                    <TouchableOpacity key={i} style={styles.badge} onPress={() => removeVariant(i)}>
-                                        <Text style={styles.badgeText}>{v.name}</Text>
-                                        <Trash2 color="#ef4444" size={12} style={{ marginLeft: 5 }} />
-                                    </TouchableOpacity>
+                                    <View key={i} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f9fafb', padding: 12, borderRadius: 8, marginBottom: 10, borderWidth: 1, borderColor: '#e5e7eb' }}>
+                                        <View style={{ flex: 1, marginRight: 10 }}>
+                                            <Text style={{ fontWeight: 'bold', fontSize: 15, color: '#374151', marginBottom: 5 }}>{v.name}</Text>
+                                            <DropdownPicker
+                                                items={[{ id: null, name: "No Ingredient (Leave Empty)" }, ...ingredientsList]}
+                                                selectedId={v.ingredient_id}
+                                                onSelect={(id) => updateVariantIngredient(i, id)}
+                                                placeholder="Link Ingredient (Optional)"
+                                            />
+                                        </View>
+                                        {v.ingredient_id && (
+                                            <TextInput
+                                                style={[styles.input, { width: 60, marginRight: 10, textAlign: 'center' }]}
+                                                value={v.quantity?.toString()}
+                                                onChangeText={(val) => updateVariantQuantity(i, val)}
+                                                keyboardType="numeric"
+                                                placeholder="Qty"
+                                            />
+                                        )}
+                                        <TouchableOpacity onPress={() => removeVariant(i)} style={{ padding: 8, backgroundColor: '#fee2e2', borderRadius: 8 }}>
+                                            <Trash2 color="#ef4444" size={20} />
+                                        </TouchableOpacity>
+                                    </View>
                                 ))}
                             </View>
 
