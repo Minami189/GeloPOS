@@ -20,7 +20,8 @@ export const initDB = async () => {
             CREATE TABLE IF NOT EXISTS categories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
-                synced INTEGER DEFAULT 0
+                synced INTEGER DEFAULT 0,
+                deleted_at TEXT DEFAULT NULL
             );
 
             CREATE TABLE IF NOT EXISTS ingredients (
@@ -29,7 +30,8 @@ export const initDB = async () => {
                 unit TEXT NOT NULL,
                 stock_quantity REAL NOT NULL DEFAULT 0,
                 cost_per_unit REAL NOT NULL DEFAULT 0,
-                synced INTEGER DEFAULT 0
+                synced INTEGER DEFAULT 0,
+                deleted_at TEXT DEFAULT NULL
             );
 
             CREATE TABLE IF NOT EXISTS products (
@@ -40,6 +42,7 @@ export const initDB = async () => {
                 image_uri TEXT,
                 status TEXT DEFAULT 'Available',
                 synced INTEGER DEFAULT 0,
+                deleted_at TEXT DEFAULT NULL,
                 FOREIGN KEY(category_id) REFERENCES categories(id)
             );
 
@@ -48,6 +51,7 @@ export const initDB = async () => {
                 product_id INTEGER,
                 name TEXT NOT NULL,
                 synced INTEGER DEFAULT 0,
+                deleted_at TEXT DEFAULT NULL,
                 FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
             );
 
@@ -58,6 +62,7 @@ export const initDB = async () => {
                 ingredient_id INTEGER,
                 quantity REAL NOT NULL,
                 synced INTEGER DEFAULT 0,
+                deleted_at TEXT DEFAULT NULL,
                 FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE,
                 FOREIGN KEY(variant_id) REFERENCES product_variants(id) ON DELETE CASCADE,
                 FOREIGN KEY(ingredient_id) REFERENCES ingredients(id) ON DELETE CASCADE
@@ -68,9 +73,13 @@ export const initDB = async () => {
                 total_amount REAL NOT NULL,
                 cash_received REAL NOT NULL,
                 change_amount REAL NOT NULL,
-                status TEXT DEFAULT 'Pending', -- 'Pending', 'Completed' (for Kitchen Queue)
+                status TEXT DEFAULT 'Pending',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                synced INTEGER DEFAULT 0
+                synced INTEGER DEFAULT 0,
+                device_id TEXT,
+                is_local INTEGER DEFAULT 1,
+                customer_name TEXT,
+                daily_order_number INTEGER
             );
 
             CREATE TABLE IF NOT EXISTS order_items (
@@ -83,6 +92,11 @@ export const initDB = async () => {
                 FOREIGN KEY(order_id) REFERENCES orders(id) ON DELETE CASCADE,
                 FOREIGN KEY(product_id) REFERENCES products(id),
                 FOREIGN KEY(variant_id) REFERENCES product_variants(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
             );
         `);
 
@@ -115,6 +129,42 @@ export const initDB = async () => {
             console.error('Migration error for orders customer_name:', err);
         }
 
+        // --- Migration: Add 'device_id' and 'is_local' columns to orders if missing ---
+        try {
+            const ordersInfo = await db.getAllAsync(`PRAGMA table_info(orders)`);
+            const hasDeviceId = ordersInfo.some(col => col.name === 'device_id');
+            const hasIsLocal = ordersInfo.some(col => col.name === 'is_local');
+            
+            if (!hasDeviceId) {
+                await db.execAsync(`ALTER TABLE orders ADD COLUMN device_id TEXT;`);
+                console.log("Added 'device_id' column to orders table");
+            }
+            if (!hasIsLocal) {
+                await db.execAsync(`ALTER TABLE orders ADD COLUMN is_local INTEGER DEFAULT 1;`);
+                console.log("Added 'is_local' column to orders table");
+            }
+
+            const hasDailyOrderNum = ordersInfo.some(col => col.name === 'daily_order_number');
+            if (!hasDailyOrderNum) {
+                await db.execAsync(`ALTER TABLE orders ADD COLUMN daily_order_number INTEGER;`);
+                console.log("Added 'daily_order_number' column to orders table");
+            }
+        } catch (err) {
+            console.error('Migration error for orders device_id/is_local/daily_num:', err);
+        }
+
+        // --- Migration: Ensure 'settings' table exists for existing users ---
+        try {
+            await db.execAsync(`
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                );
+            `);
+        } catch (err) {
+            console.error('Migration error for settings table:', err);
+        }
+
         // --- Migration: Add 'deleted_at' column to syncable tables if missing ---
         for (const table of tablesToUpdate) {
             try {
@@ -128,6 +178,17 @@ export const initDB = async () => {
             } catch (err) {
                 console.error(`Migration error for ${table} deleted_at:`, err);
             }
+        }
+
+        // --- Migration: Add 'deleted_at' column to orders if missing ---
+        try {
+            const ordersInfo = await db.getAllAsync(`PRAGMA table_info(orders)`);
+            const hasDeletedAt = ordersInfo.some(col => col.name === 'deleted_at');
+            if (!hasDeletedAt) {
+                await db.execAsync(`ALTER TABLE orders ADD COLUMN deleted_at TEXT DEFAULT NULL;`);
+            }
+        } catch (err) {
+            console.error('Migration error for orders deleted_at:', err);
         }
 
         // --- Migration: Case-insensitive unique index for ingredient names ---
@@ -160,5 +221,24 @@ export const initDB = async () => {
         console.log("Database initialized successfully.");
     } catch (e) {
         console.error("Database initialization error:", e);
+    }
+};
+
+export const getDeviceId = async () => {
+    try {
+        const db = await getDBConnection();
+        const settings = await db.getFirstAsync('SELECT value FROM settings WHERE key = "device_id"');
+        
+        if (settings && settings.value) {
+            return settings.value;
+        }
+        
+        // Generate new random ID
+        const newId = `DEV-${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
+        await db.runAsync('INSERT INTO settings (key, value) VALUES ("device_id", ?)', newId);
+        return newId;
+    } catch (e) {
+        console.error("Failed to get device_id", e);
+        return 'UNKNOWN-DEVICE';
     }
 };

@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, Image, Modal, TextInput, Alert, ScrollView } from 'react-native';
-import { getDBConnection } from '../lib/database';
+import { getDBConnection, getDeviceId } from '../lib/database';
 import { useFocusEffect } from '@react-navigation/native';
 import { ShoppingCart, Plus, Minus, Trash2, X, CheckCircle, Search } from 'lucide-react-native';
 
@@ -221,10 +221,17 @@ export default function POSScreen() {
             }
             console.log("--- DEDUCTION COMPLETE ---");
 
+            // Get daily order number
+            const todayCount = await db.getFirstAsync(
+                "SELECT COUNT(*) as count FROM orders WHERE DATE(created_at) = DATE('now', 'localtime') AND device_id = ?",
+                localDevId
+            );
+            const dailyOrderNum = todayCount ? todayCount.count : 0; // Starts with 0
+
             // Create Order
             const res = await db.runAsync(
-                'INSERT INTO orders (total_amount, cash_received, change_amount, status, customer_name) VALUES (?, ?, ?, "Pending", ?)',
-                totalAmount, cash, changeAmount, trimmedName
+                'INSERT INTO orders (total_amount, cash_received, change_amount, status, customer_name, device_id, is_local, daily_order_number) VALUES (?, ?, ?, "Pending", ?, ?, 1, ?)',
+                totalAmount, cash, changeAmount, trimmedName, localDevId, dailyOrderNum
             );
             const orderId = res.lastInsertRowId;
             setLastOrderId(orderId);

@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { getDBConnection } from './database';
+import { getDBConnection, getDeviceId } from './database';
 import * as FileSystem from 'expo-file-system';
 import { decode } from 'base64-arraybuffer';
 
@@ -28,6 +28,7 @@ export const syncOrdersToSupabase = async () => {
                 .from('pos_orders')
                 .select('id')
                 .eq('local_id', order.id)
+                .eq('device_id', order.device_id) // Add device_id to unique check
                 .single();
 
             let orderData, orderError;
@@ -37,7 +38,10 @@ export const syncOrdersToSupabase = async () => {
                 cash_received: order.cash_received,
                 change_amount: order.change_amount,
                 status: order.status,
-                created_at: order.created_at
+                created_at: order.created_at,
+                device_id: order.device_id,
+                customer_name: order.customer_name,
+                daily_order_number: order.daily_order_number
             };
 
             if (existingOrder) {
@@ -407,7 +411,9 @@ export const fetchOrdersFromSupabase = async () => {
                     }
                 }
 
-                // Re-insert orders using local IDs (if they were UUIDs in cloud, we use the local_id field)
+                const localDevId = await getDeviceId();
+
+                // Re-insert orders using local IDs
                 for (const order of uniqueOrders) {
                     const sId         = parseInt(order.local_id, 10) || parseInt(order.id, 10);
                     const totalAmount = parseFloat(order.total_amount  || 0);
@@ -416,11 +422,14 @@ export const fetchOrdersFromSupabase = async () => {
                     const status      = order.status      ? String(order.status)      : 'Pending';
                     const createdAt   = order.created_at  ? String(order.created_at)  : new Date().toISOString();
                     const custName    = order.customer_name ? String(order.customer_name) : null;
+                    const deviceId    = order.device_id || 'UNKNOWN';
+                    const isLocal     = deviceId === localDevId ? 1 : 0;
+                    const dailyNum    = order.daily_order_number || 0;
 
                     await db.runAsync(
-                        `INSERT OR REPLACE INTO orders (id, total_amount, cash_received, change_amount, status, created_at, customer_name, synced)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
-                        sId, totalAmount, cashRecv, changeAmt, status, createdAt, custName
+                        `INSERT OR REPLACE INTO orders (id, total_amount, cash_received, change_amount, status, created_at, customer_name, device_id, is_local, daily_order_number, synced)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+                        sId, totalAmount, cashRecv, changeAmt, status, createdAt, custName, deviceId, isLocal, dailyNum
                     );
                 }
 

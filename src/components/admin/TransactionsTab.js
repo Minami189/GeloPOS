@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
-import { getDBConnection } from '../../lib/database';
+import { getDBConnection, getDeviceId } from '../../lib/database';
 import { syncOrdersToSupabase, fetchOrdersFromSupabase } from '../../lib/syncService';
 import { RefreshCw, History, CheckCircle, DownloadCloud } from 'lucide-react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -21,12 +21,14 @@ export default function TransactionsTab() {
         setIsLoading(true);
         try {
             const db = await getDBConnection();
-            // Get today's transactions only
+            const localDevId = await getDeviceId();
+            // Get today's transactions only for this device
             const res = await db.getAllAsync(`
                 SELECT * FROM orders 
                 WHERE DATE(created_at) = DATE('now', 'localtime')
+                AND device_id = ?
                 ORDER BY created_at DESC
-            `);
+            `, localDevId);
             setTransactions(res || []);
         } catch (error) {
             console.error("Failed to load today's transactions", error);
@@ -64,9 +66,14 @@ export default function TransactionsTab() {
     const renderItem = ({ item }) => (
         <View style={styles.transactionCard}>
             <View style={styles.cardHeader}>
-                <Text style={styles.orderId}>Order #{item.id}</Text>
-                <View style={styles.statusBadge}>
-                    <Text style={styles.statusText}>{item.status}</Text>
+                <View>
+                    <Text style={styles.orderId}>Order #{item.daily_order_number ?? item.id}</Text>
+                    <Text style={styles.orderDate}>{new Date(item.created_at).toLocaleString()}</Text>
+                </View>
+                <View style={[styles.statusBadge, { backgroundColor: item.status === 'Completed' ? '#dcfce7' : '#fef9c3' }]}>
+                    <Text style={[styles.statusText, { color: item.status === 'Completed' ? '#166534' : '#854d0e' }]}>
+                        {item.status}
+                    </Text>
                 </View>
             </View>
             
@@ -78,10 +85,6 @@ export default function TransactionsTab() {
                 <View style={styles.row}>
                     <Text style={styles.label}>Total Amount:</Text>
                     <Text style={styles.valueAmount}>₱{item.total_amount.toFixed(2)}</Text>
-                </View>
-                <View style={styles.row}>
-                    <Text style={styles.label}>Time:</Text>
-                    <Text style={styles.value}>{new Date(item.created_at).toLocaleTimeString()}</Text>
                 </View>
             </View>
             
@@ -107,31 +110,13 @@ export default function TransactionsTab() {
         <View style={styles.container}>
             <View style={styles.header}>
                 <View style={styles.titleContainer}>
-                    <History color="#1f2937" size={24} />
+                    <History color="#1f2937" size={28} />
                     <Text style={styles.title}>Today's Transactions</Text>
                 </View>
-                <View style={styles.buttonGroup}>
-                    <TouchableOpacity 
-                        style={[styles.syncButton, { backgroundColor: '#8b5cf6' }, isFetching && styles.syncButtonDisabled]} 
-                        onPress={handleFetchAll} 
-                        disabled={isFetching || isSyncing}
-                    >
-                        {isFetching ? <ActivityIndicator size="small" color="#fff" /> : <DownloadCloud color="#fff" size={18} />}
-                        <Text style={styles.syncButtonText}>
-                            {isFetching ? 'Fetching...' : 'Fetch All'}
-                        </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity 
-                        style={[styles.syncButton, isSyncing && styles.syncButtonDisabled]} 
-                        onPress={handleSyncToday} 
-                        disabled={isSyncing || isFetching}
-                    >
-                        {isSyncing ? <ActivityIndicator size="small" color="#fff" /> : <RefreshCw color="#fff" size={18} />}
-                        <Text style={styles.syncButtonText}>
-                            {isSyncing ? 'Syncing...' : 'Sync Today'}
-                        </Text>
-                    </TouchableOpacity>
-                </View>
+                <TouchableOpacity style={styles.refreshBtn} onPress={loadTransactions} disabled={isLoading}>
+                    <RefreshCw color="#3b82f6" size={20} />
+                    <Text style={styles.refreshBtnText}>{isLoading ? 'Refreshing...' : 'Refresh'}</Text>
+                </TouchableOpacity>
             </View>
 
             {isLoading ? (
@@ -141,7 +126,7 @@ export default function TransactionsTab() {
             ) : (
                 <FlatList
                     data={transactions}
-                    keyExtractor={item => item.id.toString()}
+                    keyExtractor={item => (item.id || Math.random()).toString()}
                     renderItem={renderItem}
                     contentContainerStyle={styles.listContainer}
                     ListEmptyComponent={
@@ -180,20 +165,20 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         gap: 10
     },
-    syncButton: {
+    refreshBtn: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#3b82f6',
         paddingHorizontal: 16,
-        paddingVertical: 10,
+        paddingVertical: 8,
         borderRadius: 8,
+        backgroundColor: '#eff6ff',
         gap: 8
     },
-    syncButtonDisabled: {
-        backgroundColor: '#9ca3af'
+    refreshBtnDisabled: {
+        opacity: 0.5
     },
-    syncButtonText: {
-        color: '#ffffff',
+    refreshBtnText: {
+        color: '#3b82f6',
         fontWeight: 'bold',
         fontSize: 14
     },
@@ -231,6 +216,11 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: 'bold',
         color: '#1f2937'
+    },
+    orderDate: {
+        fontSize: 12,
+        color: '#6b7280',
+        marginTop: 2
     },
     statusBadge: {
         backgroundColor: '#d1fae5',
