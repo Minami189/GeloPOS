@@ -84,14 +84,30 @@ export const syncCatalogToSupabase = async () => {
         ];
 
         for (const tableDef of tablesToSync) {
-            const unsyncedItems = await db.getAllAsync(`SELECT * FROM ${tableDef.local} WHERE synced = 0`);
+            // Process items meant to be deleted vs updated/inserted
+            const unsyncedItems = await db.getAllAsync(`SELECT * FROM ${tableDef.local} WHERE synced = 0 AND deleted_at IS NULL`);
+            const deletedItems = await db.getAllAsync(`SELECT * FROM ${tableDef.local} WHERE synced = 0 AND deleted_at IS NOT NULL`);
+
+            // Handle hard deletes to Supabase
+            if (deletedItems && deletedItems.length > 0) {
+                for (const delItem of deletedItems) {
+                    const { error: delErr } = await supabase.from(tableDef.supabase).delete().eq('id', delItem.id);
+                    if (delErr) {
+                        console.error(`Failed to delete ${tableDef.local} ${delItem.id} from Supabase:`, delErr);
+                    } else {
+                        // Hard delete locally after successful cloud sync
+                        await db.runAsync(`DELETE FROM ${tableDef.local} WHERE id = ?`, delItem.id);
+                        totalSynced++;
+                    }
+                }
+            }
 
             if (unsyncedItems && unsyncedItems.length > 0) {
                 // remove 'synced' column from the data before sending to Supabase
                 // and ensure all data types are safe for JSON serialization (dates -> strings)
                 const itemsToInsert = [];
                 for (const item of unsyncedItems) {
-                    const { synced, ...rest } = item;
+                    const { synced, deleted_at, ...rest } = item;
 
                     // Handle Image Upload for Products
                     if (tableDef.local === 'products' && rest.image_uri && rest.image_uri.startsWith('file://')) {
