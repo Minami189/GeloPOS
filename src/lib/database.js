@@ -130,6 +130,33 @@ export const initDB = async () => {
             }
         }
 
+        // --- Migration: Case-insensitive unique index for ingredient names ---
+        // SQLite UNIQUE constraints are case-sensitive by default. This index
+        // prevents "Sugar" and "sugar" from coexisting as separate ingredients.
+        try {
+            await db.execAsync(`
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_ingredients_name_ci
+                ON ingredients (name COLLATE NOCASE)
+                WHERE deleted_at IS NULL;
+            `);
+        } catch (err) {
+            // Index may already exist with a different definition — safe to ignore
+            console.warn('ingredients CI index migration:', err.message);
+        }
+
+        // --- Migration: Case-insensitive unique index for variant names per product ---
+        // "Regular" and "regular" for the same product should be treated as the same variant.
+        // Variants with the same name on DIFFERENT products are allowed.
+        try {
+            await db.execAsync(`
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_variants_product_name_ci
+                ON product_variants (product_id, name COLLATE NOCASE)
+                WHERE deleted_at IS NULL;
+            `);
+        } catch (err) {
+            console.warn('product_variants CI index migration:', err.message);
+        }
+
         console.log("Database initialized successfully.");
     } catch (e) {
         console.error("Database initialization error:", e);

@@ -55,8 +55,25 @@ export default function KitchenScreen() {
         setConfirmVisible(false);
         try {
             const db = await getDBConnection();
-            await db.runAsync('UPDATE orders SET status = "Completed" WHERE id = ?', pendingOrderId);
+            // Important: Mark synced = 0 so the status update is pushed to Supabase
+            await db.runAsync('UPDATE orders SET status = "Completed", synced = 0 WHERE id = ?', pendingOrderId);
             loadPendingOrders();
+            // Reload history in the background so it is up to date when next opened
+            const completedOrders = await db.getAllAsync(
+                'SELECT * FROM orders WHERE status = "Completed" ORDER BY created_at DESC LIMIT 50'
+            );
+            let structured = [];
+            for (let o of completedOrders) {
+                const items = await db.getAllAsync(`
+                    SELECT oi.*, p.name as product_name, pv.name as variant_name 
+                    FROM order_items oi
+                    LEFT JOIN products p ON oi.product_id = p.id
+                    LEFT JOIN product_variants pv ON oi.variant_id = pv.id
+                    WHERE oi.order_id = ?
+                `, o.id);
+                structured.push({ ...o, items });
+            }
+            setHistoryOrders(structured);
         } catch (e) { console.error("Failed to complete order", e); }
         setPendingOrderId(null);
     };
@@ -77,7 +94,7 @@ export default function KitchenScreen() {
                 const items = await db.getAllAsync(`
                     SELECT oi.*, p.name as product_name, pv.name as variant_name 
                     FROM order_items oi
-                    JOIN products p ON oi.product_id = p.id
+                    LEFT JOIN products p ON oi.product_id = p.id
                     LEFT JOIN product_variants pv ON oi.variant_id = pv.id
                     WHERE oi.order_id = ?
                 `, o.id);
@@ -88,8 +105,18 @@ export default function KitchenScreen() {
         } catch (e) { console.error("Failed to load order history", e); }
     };
 
+    // Safely parse a date string that may or may not already include timezone info.
+    // Appending 'Z' to a string that already has '+HH:MM' produces an invalid date.
+    const parseDate = (str) => {
+        if (!str) return new Date(NaN);
+        // If it already has a timezone offset or ends with Z, parse as-is
+        if (/[Zz]$/.test(str) || /[+-]\d{2}:\d{2}$/.test(str)) return new Date(str);
+        // Otherwise treat as UTC by appending Z
+        return new Date(str + 'Z');
+    };
+
     const formatElapsedTime = (createdAtStr) => {
-        const createdMs = new Date(createdAtStr + 'Z').getTime();
+        const createdMs = parseDate(createdAtStr).getTime();
         const nowMs = currentTime.getTime();
         const diffSecs = Math.max(0, Math.floor((nowMs - createdMs) / 1000));
         const m = Math.floor(diffSecs / 60);
@@ -99,8 +126,8 @@ export default function KitchenScreen() {
 
     const formatDateTime = (str) => {
         if (!str) return '';
-        const d = new Date(str + 'Z');
-        return d.toLocaleString();
+        const d = parseDate(str);
+        return isNaN(d.getTime()) ? str : d.toLocaleString();
     };
 
     const orderLabel = (order) => {

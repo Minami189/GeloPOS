@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, TextInput, Modal, Alert } from 'react-native';
 import { getDBConnection } from '../../lib/database';
 import { deleteRecordFromSupabase } from '../../lib/syncService';
 import { Plus, Edit2, Trash2, X } from 'lucide-react-native';
+import { useFocusEffect } from '@react-navigation/native';
 
 export default function IngredientsTab() {
     const [ingredients, setIngredients] = useState([]);
@@ -15,9 +16,11 @@ export default function IngredientsTab() {
     const [stock, setStock] = useState('');
     const [cost, setCost] = useState('');
 
-    useEffect(() => {
-        loadIngredients();
-    }, []);
+    useFocusEffect(
+        useCallback(() => {
+            loadIngredients();
+        }, [])
+    );
 
     const loadIngredients = async () => {
         try {

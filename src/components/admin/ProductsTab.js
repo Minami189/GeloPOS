@@ -191,12 +191,14 @@ export default function ProductsTab() {
                     throw new Error("Failed to disconnect old variants from orders: " + e.message);
                 }
 
+                // To maintain sync integrity, we must NOT hard-delete. 
+                // Instead, mark old variants/recipes as soft-deleted so sync service
+                // can push the deletions to Supabase before we insert the new ones.
                 try {
-                    // Delete and re-insert variants / recipes
-                    await db.runAsync('DELETE FROM product_variants WHERE product_id = ?', editingItem.id);
-                    await db.runAsync('DELETE FROM recipes WHERE product_id = ?', editingItem.id);
+                    await db.runAsync('UPDATE product_variants SET deleted_at = CURRENT_TIMESTAMP, synced = 0 WHERE product_id = ?', editingItem.id);
+                    await db.runAsync('UPDATE recipes SET deleted_at = CURRENT_TIMESTAMP, synced = 0 WHERE product_id = ?', editingItem.id);
                 } catch (e) {
-                    throw new Error("Failed to wipe old variants and recipes: " + e.message);
+                    throw new Error("Failed to flag old variants and recipes for sync deletion: " + e.message);
                 }
 
                 for (let v of variants) {
@@ -305,9 +307,9 @@ export default function ProductsTab() {
                 setImageUri(item.image_uri);
                 setStatus(item.status || 'Available');
 
-                const vars = await db.getAllAsync('SELECT * FROM product_variants WHERE product_id = ?', item.id);
-                const recs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id IS NULL', item.id);
-                const varRecs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id IS NOT NULL', item.id);
+                const vars = await db.getAllAsync('SELECT * FROM product_variants WHERE product_id = ? AND deleted_at IS NULL', item.id);
+                const recs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id IS NULL AND deleted_at IS NULL', item.id);
+                const varRecs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id IS NOT NULL AND deleted_at IS NULL', item.id);
 
                 const loadedVariants = (vars || []).map(v => {
                     const vr = (varRecs || []).find(r => r.variant_id === v.id);

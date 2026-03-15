@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, Image, Modal, TextInput, Alert, ScrollView } from 'react-native';
 import { getDBConnection } from '../lib/database';
+import { useFocusEffect } from '@react-navigation/native';
 import { ShoppingCart, Plus, Minus, Trash2, X, CheckCircle, Search } from 'lucide-react-native';
 
 export default function POSScreen() {
@@ -25,15 +26,17 @@ export default function POSScreen() {
     const [stockWarningVisible, setStockWarningVisible] = useState(false);
     const [stockWarnings, setStockWarnings] = useState([]);
 
-    useEffect(() => {
-        loadProducts();
-        loadCategories();
-    }, []);
+    useFocusEffect(
+        useCallback(() => {
+            loadProducts();
+            loadCategories();
+        }, [])
+    );
 
     const loadProducts = async () => {
         try {
             const db = await getDBConnection();
-            const res = await db.getAllAsync('SELECT * FROM products WHERE status = "Available"');
+            const res = await db.getAllAsync('SELECT * FROM products WHERE status = "Available" AND deleted_at IS NULL');
             setProducts(res || []);
         } catch (e) { console.error("Failed to load POS products", e); }
     };
@@ -41,7 +44,7 @@ export default function POSScreen() {
     const loadCategories = async () => {
         try {
             const db = await getDBConnection();
-            const res = await db.getAllAsync('SELECT * FROM categories ORDER BY name ASC');
+            const res = await db.getAllAsync('SELECT * FROM categories WHERE deleted_at IS NULL ORDER BY name ASC');
             setCategories(res || []);
         } catch (e) { console.error("Failed to load categories", e); }
     };
@@ -61,7 +64,9 @@ export default function POSScreen() {
     const handleProductSelect = async (product) => {
         try {
             const db = await getDBConnection();
-            const vars = await db.getAllAsync('SELECT * FROM product_variants WHERE product_id = ?', product.id);
+            // Clear stale variants before fetching to prevent duplicates
+            setVariants([]);
+            const vars = await db.getAllAsync('SELECT * FROM product_variants WHERE product_id = ? AND deleted_at IS NULL', product.id);
 
             if (vars && vars.length > 0) {
                 setSelectedProduct(product);
@@ -165,18 +170,56 @@ export default function POSScreen() {
             const trimmedName = customerName.trim() || null;
 
             // Deduct stock for ingredients
+            console.log("--- STARTING INGREDIENT DEDUCTION ---");
             for (let item of cart) {
-                let recs;
-                if (item.variant) {
-                    recs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id = ?', item.product.id, item.variant.id);
-                } else {
-                    recs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id IS NULL', item.product.id);
+                console.log(`Processing cart item: ${item.product.name} x ${item.quantity}`);
+                
+                // IMPORTANT: Use LOWER and TRIM for robust matching after sync ID shifts
+                const latestProduct = await db.getFirstAsync(
+                    'SELECT id FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND deleted_at IS NULL', 
+                    item.product.name
+                );
+                
+                if (!latestProduct) {
+                    console.warn(`Product lookup failed for: ${item.product.name}`);
+                    continue;
                 }
+                const productId = latestProduct.id;
+
+                let latestVariantId = null;
+                if (item.variant) {
+                    const latestVar = await db.getFirstAsync(
+                        'SELECT id FROM product_variants WHERE product_id = ? AND LOWER(TRIM(name)) = LOWER(TRIM(?)) AND deleted_at IS NULL', 
+                        productId, item.variant.name
+                    );
+                    if (latestVar) {
+                        latestVariantId = latestVar.id;
+                        console.log(`Matched variant: ${item.variant.name} -> ID: ${latestVariantId}`);
+                    } else {
+                        console.warn(`Variant lookup failed for: ${item.variant.name} on product ID: ${productId}`);
+                    }
+                }
+
+                let recs;
+                if (latestVariantId) {
+                    recs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id = ? AND deleted_at IS NULL', productId, latestVariantId);
+                } else {
+                    recs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id IS NULL AND deleted_at IS NULL', productId);
+                }
+
+                console.log(`Found ${recs.length} recipe lines for product ID ${productId}`);
+
                 for (let r of recs) {
                     const totalUsed = r.quantity * item.quantity;
-                    await db.runAsync('UPDATE ingredients SET stock_quantity = stock_quantity - ? WHERE id = ?', totalUsed, r.ingredient_id);
+                    console.log(`Deducting ${totalUsed} from ingredient ID ${r.ingredient_id}`);
+                    // Mark synced=0 so the updated stock is pushed to Supabase on next sync
+                    await db.runAsync(
+                        'UPDATE ingredients SET stock_quantity = stock_quantity - ?, synced = 0 WHERE id = ?',
+                        totalUsed, r.ingredient_id
+                    );
                 }
             }
+            console.log("--- DEDUCTION COMPLETE ---");
 
             // Create Order
             const res = await db.runAsync(

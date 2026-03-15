@@ -5,13 +5,11 @@ import IngredientsTab from '../components/admin/IngredientsTab';
 import ProductsTab from '../components/admin/ProductsTab';
 import CategoriesTab from '../components/admin/CategoriesTab';
 import TransactionsTab from '../components/admin/TransactionsTab';
-import { syncAllToSupabase, fetchDataFromSupabase } from '../lib/syncService';
-import { DownloadCloud } from 'lucide-react-native';
+import { syncAllToSupabase } from '../lib/syncService';
 
 export default function AdminScreen() {
     const [activeTab, setActiveTab] = useState('Ingredients');
     const [isSyncing, setIsSyncing] = useState(false);
-    const [isFetching, setIsFetching] = useState(false);
     const [syncTrigger, setSyncTrigger] = useState(0);
 
     const handleSync = async () => {
@@ -27,33 +25,16 @@ export default function AdminScreen() {
         }
     };
 
-    const handleFetch = async () => {
-        setIsFetching(true);
-        const result = await fetchDataFromSupabase();
-        setIsFetching(false);
 
-        if (result.success) {
-            setSyncTrigger(prev => prev + 1);
-            Alert.alert("Fetch Success", result.message);
-        } else {
-            Alert.alert("Fetch Failed", result.error || "Unknown error occurred.");
-        }
-    };
 
     return (
         <View style={styles.container}>
             <View style={styles.header}>
             <Text style={styles.headerTitle}>Admin Panel</Text>
-                <View style={{ flexDirection: 'row', gap: 10 }}>
-                    <TouchableOpacity style={[styles.syncBtn, { backgroundColor: '#8b5cf6' }]} onPress={handleFetch} disabled={isFetching || isSyncing}>
-                        {isFetching ? <ActivityIndicator size="small" color="#fff" /> : <DownloadCloud color="#fff" size={20} />}
-                        <Text style={styles.syncBtnText}>{isFetching ? 'Fetching...' : 'Fetch from Cloud'}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.syncBtn} onPress={handleSync} disabled={isSyncing || isFetching}>
-                        {isSyncing ? <ActivityIndicator size="small" color="#fff" /> : <RefreshCw color="#fff" size={20} />}
-                        <Text style={styles.syncBtnText}>{isSyncing ? 'Syncing...' : 'Sync to Online'}</Text>
-                    </TouchableOpacity>
-                </View>
+                <TouchableOpacity style={styles.syncBtn} onPress={handleSync} disabled={isSyncing}>
+                    {isSyncing ? <ActivityIndicator size="small" color="#fff" /> : <RefreshCw color="#fff" size={20} />}
+                    <Text style={styles.syncBtnText}>{isSyncing ? 'Syncing...' : 'Sync to Online'}</Text>
+                </TouchableOpacity>
             </View>
 
             <View style={styles.tabsContainer}>
