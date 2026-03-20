@@ -98,6 +98,20 @@ export const initDB = async () => {
                 key TEXT PRIMARY KEY,
                 value TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                pin TEXT NOT NULL,
+                role TEXT DEFAULT 'staff',
+                can_access_pos INTEGER DEFAULT 1,
+                can_access_kitchen INTEGER DEFAULT 1,
+                can_access_admin INTEGER DEFAULT 0,
+                can_access_analytics INTEGER DEFAULT 0,
+                can_access_settings INTEGER DEFAULT 0,
+                avatar_emoji TEXT DEFAULT '👤',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
         `);
 
         // --- Migration: Add 'synced' column to existing tables if missing ---
@@ -216,6 +230,51 @@ export const initDB = async () => {
             `);
         } catch (err) {
             console.warn('product_variants CI index migration:', err.message);
+        }
+
+        // --- Seed default users if none exist ---
+        try {
+            const userCount = await db.getFirstAsync('SELECT COUNT(*) as cnt FROM users');
+            if (!userCount || userCount.cnt === 0) {
+                await db.execAsync(`
+                    INSERT INTO users (username, pin, role, can_access_pos, can_access_kitchen, can_access_admin, can_access_analytics, can_access_settings, avatar_emoji)
+                    VALUES ('Admin', '1234', 'admin', 1, 1, 1, 1, 1, '👑');
+                    INSERT INTO users (username, pin, role, can_access_pos, can_access_kitchen, can_access_admin, can_access_analytics, can_access_settings, avatar_emoji)
+                    VALUES ('Cashier', '5678', 'cashier', 1, 1, 0, 1, 0, '🧑‍💼');
+                `);
+                console.log('Seeded default Admin and Cashier users.');
+            }
+        } catch (err) {
+            console.error('Error seeding default users:', err);
+        }
+
+        // --- Migration: Add users table for existing installs ---
+        try {
+            await db.execAsync(`
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL UNIQUE,
+                    pin TEXT NOT NULL,
+                    role TEXT DEFAULT 'staff',
+                    can_access_pos INTEGER DEFAULT 1,
+                    can_access_kitchen INTEGER DEFAULT 1,
+                    can_access_admin INTEGER DEFAULT 0,
+                    can_access_analytics INTEGER DEFAULT 0,
+                    can_access_settings INTEGER DEFAULT 0,
+                    avatar_emoji TEXT DEFAULT '👤',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+            `);
+
+            // Add new column to existing database if it already exists
+            try {
+                await db.execAsync(`ALTER TABLE users ADD COLUMN can_access_settings INTEGER DEFAULT 0;`);
+                await db.execAsync(`UPDATE users SET can_access_settings = 1 WHERE role = 'admin';`);
+            } catch (err) {
+                // column exists
+            }
+        } catch (err) {
+            console.error('Migration error for users table:', err);
         }
 
         console.log("Database initialized successfully.");

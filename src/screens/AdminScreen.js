@@ -8,7 +8,7 @@ import TransactionsTab from '../components/admin/TransactionsTab';
 import { syncAllToSupabase } from '../lib/syncService';
 
 export default function AdminScreen() {
-    const [activeTab, setActiveTab] = useState('Ingredients');
+    const [activeTab, setActiveTab] = useState('Products');
     const [isSyncing, setIsSyncing] = useState(false);
     const [syncTrigger, setSyncTrigger] = useState(0);
 
@@ -30,10 +30,10 @@ export default function AdminScreen() {
     return (
         <View style={styles.container}>
             <View style={styles.header}>
-            <Text style={styles.headerTitle}>Admin Panel</Text>
+                <Text style={styles.headerTitle}>Admin Panel</Text>
                 <TouchableOpacity style={styles.syncBtn} onPress={handleSync} disabled={isSyncing}>
                     {isSyncing ? <ActivityIndicator size="small" color="#fff" /> : <RefreshCw color="#fff" size={20} />}
-                    <Text style={styles.syncBtnText}>{isSyncing ? 'Syncing...' : 'Sync to Online'}</Text>
+                    <Text style={styles.syncBtnText}>{isSyncing ? 'Syncing...' : 'Sync to Supabase'}</Text>
                 </TouchableOpacity>
             </View>
 

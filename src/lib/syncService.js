@@ -33,7 +33,7 @@ export const syncOrdersToSupabase = async () => {
 
             let orderData, orderError;
             const orderPayload = {
-                local_id: order.id, 
+                local_id: order.id,
                 total_amount: order.total_amount,
                 cash_received: order.cash_received,
                 change_amount: order.change_amount,
@@ -121,13 +121,36 @@ export const syncCatalogToSupabase = async () => {
             // Handle hard deletes to Supabase
             if (deletedItems && deletedItems.length > 0) {
                 for (const delItem of deletedItems) {
-                    const { error: delErr } = await supabase.from(tableDef.supabase).delete().eq('id', delItem.id);
-                    if (delErr) {
-                        console.error(`Failed to delete ${tableDef.local} ${delItem.id} from Supabase:`, delErr);
-                    } else {
-                        // Hard delete locally after successful cloud sync
+                    // First check if the item still exists in Supabase
+                    const { data: checkData, error: checkErr } = await supabase
+                        .from(tableDef.supabase)
+                        .select('id')
+                        .eq('id', delItem.id)
+                        .maybeSingle();
+
+                    // If checking failed due to network, abort immediately
+                    if (checkErr && (checkErr.message?.includes('Failed to fetch') || checkErr.message?.includes('Network request'))) {
+                        throw checkErr;
+                    }
+
+                    // If checking didn't error, but no data was returned, the item is already gone.
+                    if (!checkData && !checkErr) {
+                        // Already deleted remotely, safe to clear local tombstone
                         await db.runAsync(`DELETE FROM ${tableDef.local} WHERE id = ?`, delItem.id);
                         totalSynced++;
+                    } else {
+                        // Item exists (or check failed for other reasons), attempt deletion
+                        const { error: delErr } = await supabase.from(tableDef.supabase).delete().eq('id', delItem.id);
+                        if (delErr) {
+                            if (delErr.message?.includes('Failed to fetch') || delErr.message?.includes('Network request')) {
+                                throw delErr;
+                            }
+                            console.error(`Failed to delete ${tableDef.local} ${delItem.id} from Supabase:`, delErr);
+                        } else {
+                            // Hard delete locally after successful cloud sync
+                            await db.runAsync(`DELETE FROM ${tableDef.local} WHERE id = ?`, delItem.id);
+                            totalSynced++;
+                        }
                     }
                 }
             }
@@ -187,12 +210,28 @@ export const syncCatalogToSupabase = async () => {
                     .from(tableDef.supabase)
                     .upsert(itemsToInsert, { onConflict: 'id' });
 
-                if (error) throw error;
-
-                for (const item of unsyncedItems) {
-                    await db.runAsync(`UPDATE ${tableDef.local} SET synced = 1 WHERE id = ?`, item.id);
+                if (error) {
+                    console.warn(`Bulk upsert failed for ${tableDef.local}, falling back to singular upserts. Error: ${error.message}`);
+                    for (const item of itemsToInsert) {
+                        const { error: singleErr } = await supabase.from(tableDef.supabase).upsert([item], { onConflict: 'id' });
+                        if (singleErr) {
+                            console.error(`Failed to upsert item ${item.id} in ${tableDef.local}:`, singleErr);
+                            // If it's a foreign key violation (23503), the parent is missing in the cloud. Delete local orphan.
+                            if (singleErr.code === '23503') {
+                                console.log(`Deleting local orphan ${item.id} from ${tableDef.local} due to missing parent reference.`);
+                                await db.runAsync(`DELETE FROM ${tableDef.local} WHERE id = ?`, item.id);
+                            }
+                        } else {
+                            await db.runAsync(`UPDATE ${tableDef.local} SET synced = 1 WHERE id = ?`, item.id);
+                            totalSynced++;
+                        }
+                    }
+                } else {
+                    for (const item of unsyncedItems) {
+                        await db.runAsync(`UPDATE ${tableDef.local} SET synced = 1 WHERE id = ?`, item.id);
+                    }
+                    totalSynced += unsyncedItems.length;
                 }
-                totalSynced += unsyncedItems.length;
             }
         }
 
@@ -237,6 +276,7 @@ export const syncAllToSupabase = async () => {
             console.error("!!! RAW FETCH CRASHED !!!");
             console.error("Message:", rawErr.message);
             console.error("This means the emulator physically cannot communicate with the Supabase URL, regardless of the Supabase library being used!");
+            return { success: false, error: `Network Error: Could not reach Supabase. Please check your emulator/device internet connection.` };
         }
 
         const catalogResult = await syncCatalogToSupabase();
@@ -274,11 +314,11 @@ const _fetchCatalogRecords = async (db) => {
     // Fetch everything from cloud BEFORE touching local DB
     // Insert order (parents first): categories → ingredients → products → product_variants → recipes
     const tables = [
-        { local: 'categories',       supabase: 'pos_categories' },
-        { local: 'ingredients',      supabase: 'pos_ingredients' },
-        { local: 'products',         supabase: 'pos_products' },
+        { local: 'categories', supabase: 'pos_categories' },
+        { local: 'ingredients', supabase: 'pos_ingredients' },
+        { local: 'products', supabase: 'pos_products' },
         { local: 'product_variants', supabase: 'pos_product_variants' },
-        { local: 'recipes',          supabase: 'pos_recipes' },
+        { local: 'recipes', supabase: 'pos_recipes' },
     ];
 
     const cloudData = {};
@@ -292,7 +332,7 @@ const _fetchCatalogRecords = async (db) => {
     // If the cloud database contains duplicates (e.g. "Sugar" and "sugar")
     // the local database re-insert will fail due to the NOCASE unique index.
     // We deduplicate here, keeping the first one seen.
-    
+
     // Deduplicate Ingredients by name
     if (cloudData.ingredients) {
         const seenNames = new Set();
@@ -332,7 +372,7 @@ const _fetchCatalogRecords = async (db) => {
     for (const t of tables) {
         const rows = cloudData[t.local];
         for (const row of rows) {
-            const keys   = [...Object.keys(row),   'synced'];
+            const keys = [...Object.keys(row), 'synced'];
             const values = [...Object.values(row), 1];
             const placeholders = keys.map(() => '?').join(', ');
             await db.runAsync(
@@ -415,16 +455,16 @@ export const fetchOrdersFromSupabase = async () => {
 
                 // Re-insert orders using local IDs
                 for (const order of uniqueOrders) {
-                    const sId         = parseInt(order.local_id, 10) || parseInt(order.id, 10);
-                    const totalAmount = parseFloat(order.total_amount  || 0);
-                    const cashRecv    = parseFloat(order.cash_received  || 0);
-                    const changeAmt   = parseFloat(order.change_amount  || 0);
-                    const status      = order.status      ? String(order.status)      : 'Pending';
-                    const createdAt   = order.created_at  ? String(order.created_at)  : new Date().toISOString();
-                    const custName    = order.customer_name ? String(order.customer_name) : null;
-                    const deviceId    = order.device_id || 'UNKNOWN';
-                    const isLocal     = deviceId === localDevId ? 1 : 0;
-                    const dailyNum    = order.daily_order_number || 0;
+                    const sId = parseInt(order.local_id, 10) || parseInt(order.id, 10);
+                    const totalAmount = parseFloat(order.total_amount || 0);
+                    const cashRecv = parseFloat(order.cash_received || 0);
+                    const changeAmt = parseFloat(order.change_amount || 0);
+                    const status = order.status ? String(order.status) : 'Pending';
+                    const createdAt = order.created_at ? String(order.created_at) : new Date().toISOString();
+                    const custName = order.customer_name ? String(order.customer_name) : null;
+                    const deviceId = order.device_id || 'UNKNOWN';
+                    const isLocal = deviceId === localDevId ? 1 : 0;
+                    const dailyNum = order.daily_order_number || 0;
 
                     await db.runAsync(
                         `INSERT OR REPLACE INTO orders (id, total_amount, cash_received, change_amount, status, created_at, customer_name, device_id, is_local, daily_order_number, synced)
@@ -435,12 +475,12 @@ export const fetchOrdersFromSupabase = async () => {
 
                 // Re-insert order items
                 for (const item of uniqueItems) {
-                    const itemId    = parseInt(item.id, 10);
-                    const orderId   = parseInt(item.local_order_id, 10) || parseInt(item.supabase_order_id, 10);
+                    const itemId = parseInt(item.id, 10);
+                    const orderId = parseInt(item.local_order_id, 10) || parseInt(item.supabase_order_id, 10);
                     const productId = item.product_id ? parseInt(item.product_id, 10) : null;
                     const variantId = item.variant_id ? parseInt(item.variant_id, 10) : null;
-                    const quantity  = parseInt(item.quantity || 1, 10);
-                    const price     = parseFloat(item.price_at_time || 0);
+                    const quantity = parseInt(item.quantity || 1, 10);
+                    const price = parseFloat(item.price_at_time || 0);
 
                     await db.runAsync(
                         `INSERT OR REPLACE INTO order_items (id, order_id, product_id, variant_id, quantity, price_at_time)

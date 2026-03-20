@@ -4,6 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, View, ActivityIndicator } from 'react-native';
 import AppNavigator from './src/navigation/AppNavigator';
 import { initDB } from './src/lib/database';
+import { AuthProvider } from './src/context/AuthContext';
 
 export default function App() {
   const [dbReady, setDbReady] = React.useState(false);
@@ -18,17 +19,19 @@ export default function App() {
 
   if (!dbReady) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' }}>
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0d1117' }}>
         <ActivityIndicator size="large" color="#3b82f6" />
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <AppNavigator />
-      <StatusBar style="auto" />
-    </View>
+    <AuthProvider>
+      <View style={styles.container}>
+        <AppNavigator />
+        <StatusBar style="light" />
+      </View>
+    </AuthProvider>
   );
 }
 
