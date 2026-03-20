@@ -222,6 +222,7 @@ export default function POSScreen() {
             console.log("--- DEDUCTION COMPLETE ---");
 
             // Get daily order number
+            const localDevId = await getDeviceId();
             const todayCount = await db.getFirstAsync(
                 "SELECT COUNT(*) as count FROM orders WHERE DATE(created_at) = DATE('now', 'localtime') AND device_id = ?",
                 localDevId

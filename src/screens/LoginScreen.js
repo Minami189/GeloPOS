@@ -89,7 +89,7 @@ function PinPad({ onSubmit, onBack, selectedUser, loading, error }) {
     }, [error]);
 
     const handleDigit = (d) => {
-        if (pin.length < 6) {
+        if (pin.length < 4) {
             const newPin = pin + d;
             setPin(newPin);
         }

@@ -31,6 +31,7 @@ function PasswordChangeCard({ title, icon: Icon, color, onSave }) {
 
     const handleSave = async () => {
         if (!newPin) { Alert.alert('Error', 'New PIN cannot be empty.'); return; }
+        if (newPin.length !== 4) { Alert.alert('Error', 'PIN must be exactly 4 digits.'); return; }
         if (newPin !== confirm) { Alert.alert('Error', 'New PIN and confirmation do not match.'); return; }
         setLoading(true);
         await onSave(current, newPin);
@@ -54,7 +55,7 @@ function PasswordChangeCard({ title, icon: Icon, color, onSave }) {
                 placeholderTextColor="#9ca3af"
                 secureTextEntry
                 keyboardType="numeric"
-                maxLength={8}
+                maxLength={4}
             />
             <TextInput
                 style={pc.input}
@@ -64,7 +65,7 @@ function PasswordChangeCard({ title, icon: Icon, color, onSave }) {
                 placeholderTextColor="#9ca3af"
                 secureTextEntry
                 keyboardType="numeric"
-                maxLength={8}
+                maxLength={4}
             />
             <TextInput
                 style={pc.input}
@@ -98,6 +99,10 @@ function UserCard({ user, onDelete, onUpdatePermissions, onUpdatePin, isCurrentU
     const [saving, setSaving] = useState(false);
 
     const handleSave = async () => {
+        if (newPin && newPin.length !== 4) {
+            Alert.alert('Error', 'PIN must be exactly 4 digits.');
+            return;
+        }
         setSaving(true);
         await onUpdatePermissions(user.id, perms, newPin || null, avatar);
         setSaving(false);
@@ -181,7 +186,7 @@ function UserCard({ user, onDelete, onUpdatePermissions, onUpdatePin, isCurrentU
                         placeholderTextColor="#9ca3af"
                         secureTextEntry
                         keyboardType="numeric"
-                        maxLength={8}
+                        maxLength={4}
                     />
 
                     <View style={uc.editorBtns}>
@@ -217,6 +222,7 @@ function AddUserModal({ onAdd, onClose }) {
     const handleAdd = async () => {
         if (!username.trim()) { Alert.alert('Error', 'Username is required.'); return; }
         if (!pin) { Alert.alert('Error', 'PIN is required.'); return; }
+        if (pin.length !== 4) { Alert.alert('Error', 'PIN must be exactly 4 digits.'); return; }
         setLoading(true);
         await onAdd({ username: username.trim(), pin, role, avatar, perms });
         setLoading(false);
@@ -247,7 +253,7 @@ function AddUserModal({ onAdd, onClose }) {
                 <TextInput style={am.input} value={username} onChangeText={setUsername} placeholder="e.g. Staff 1" placeholderTextColor="#9ca3af" />
 
                 <Text style={am.label}>PIN</Text>
-                <TextInput style={am.input} value={pin} onChangeText={setPin} keyboardType="numeric" secureTextEntry maxLength={8} placeholder="e.g. 9999" placeholderTextColor="#9ca3af" />
+                <TextInput style={am.input} value={pin} onChangeText={setPin} keyboardType="numeric" secureTextEntry maxLength={4} placeholder="e.g. 1234" placeholderTextColor="#9ca3af" />
 
                 <Text style={am.label}>Role</Text>
                 <View style={am.roleRow}>

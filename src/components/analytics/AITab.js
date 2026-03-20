@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { Sparkles, TrendingUp, TrendingDown, Send, Bot, User } from 'lucide-react-native';
 import { getDBConnection } from '../../lib/database';
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // GeloPOS-scope system prompt for the chatbot
 const SYSTEM_PROMPT = `You are GeloPOS Assistant, an AI helper for the GeloPOS point-of-sale system. 
@@ -111,9 +112,10 @@ export default function AITab() {
         setIsChatLoading(true);
 
         try {
-            // Get some context from DB
             const db = await getDBConnection();
-            const recentSales = await db.getAllAsync(`
+
+            // 1. Get Top 5 Products (Last 7 Days)
+            const recentTop = await db.getAllAsync(`
                 SELECT COALESCE(p.name, 'Deleted') as name, SUM(oi.quantity) as qty
                 FROM order_items oi
                 JOIN orders o ON oi.order_id = o.id
@@ -121,54 +123,127 @@ export default function AITab() {
                 WHERE o.status = 'Completed' AND DATE(o.created_at) >= DATE('now', '-7 days', 'localtime')
                 GROUP BY name ORDER BY qty DESC LIMIT 5
             `);
+            const topProducts = recentTop.map(s => `${s.name}: ${s.qty} units`).join(', ') || 'No sales';
 
-            const salesContext = recentSales.map(s => `${s.name}: ${s.qty} units`).join(', ') || 'No recent sales data';
+            // 2. Get Today's Totals
+            const todayStats = await db.getFirstAsync(`
+                SELECT COUNT(*) as count, SUM(total_amount) as revenue
+                FROM orders
+                WHERE status = 'Completed' AND DATE(created_at) = DATE('now', 'localtime')
+            `);
 
-            const aiEndpoint = process.env.EXPO_PUBLIC_AI_ENDPOINT;
+            // 3. Get Last 7 Days Totals
+            const weekStats = await db.getFirstAsync(`
+                SELECT COUNT(*) as count, SUM(total_amount) as revenue
+                FROM orders
+                WHERE status = 'Completed' AND DATE(created_at) >= DATE('now', '-7 days', 'localtime')
+            `);
 
-            if (aiEndpoint && aiEndpoint !== 'https://your-ai-service.com/api/suggestions') {
-                const response = await fetch(aiEndpoint, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        systemPrompt: SYSTEM_PROMPT,
-                        userMessage: text,
-                        context: `Recent 7-day sales: ${salesContext}`,
-                        history: newMessages.slice(-6).map(m => ({ role: m.role === 'bot' ? 'assistant' : 'user', content: m.text }))
-                    })
-                });
-                const data = await response.json();
-                setMessages(prev => [...prev, { role: 'bot', text: data.reply || data.suggestion || 'Unable to get a response.' }]);
-            } else {
-                // Local simulated responses scoped to POS
-                const lower = text.toLowerCase();
-                let reply = '';
+            const salesContext = `
+                - Today's Revenue: ₱${(todayStats?.revenue || 0).toFixed(2)} (${todayStats?.count || 0} orders)
+                - 7-Day Revenue: ₱${(weekStats?.revenue || 0).toFixed(2)} (${weekStats?.count || 0} orders)
+                - Recent Top Sellers: ${topProducts}
+            `.trim();
 
-                if (lower.includes('sales') || lower.includes('revenue') || lower.includes('income')) {
-                    reply = `Based on your recent data: ${salesContext}. Consider promoting your top sellers and creating combo deals to boost your average order value.`;
-                } else if (lower.includes('stock') || lower.includes('ingredient') || lower.includes('inventory')) {
-                    reply = `Check the Admin → Ingredients tab for current stock levels. Items with low or negative stock will affect product availability on the POS.`;
-                } else if (lower.includes('product') || lower.includes('item') || lower.includes('menu')) {
-                    reply = `Your recent top sellers (7 days): ${salesContext}. Consider adding variants or promotions for slower-moving items.`;
-                } else if (lower.includes('recommend') || lower.includes('suggest') || lower.includes('tip')) {
-                    reply = `Tip: Your best-selling items are ${salesContext.split(',')[0] || 'your products'}. Try bundling them with lower-selling items to balance sales across your menu.`;
-                } else if (lower.includes('hello') || lower.includes('hi') || lower.includes('hey')) {
-                    reply = `Hello! I can help with your GeloPOS data — ask me about sales trends, product performance, or inventory suggestions!`;
-                } else {
-                    reply = `I'm specialized in GeloPOS topics. I can help with sales analysis, product performance, ingredient stock, and operational tips. What would you like to know about your store?`;
-                }
-
-                setTimeout(() => {
-                    setMessages(prev => [...prev, { role: 'bot', text: reply }]);
-                    setIsChatLoading(false);
-                }, 800);
-                return;
+            const apiKey = process.env.EXPO_PUBLIC_AI_ENDPOINT;
+            if (!apiKey || apiKey.includes('http')) {
+                throw new Error("Invalid Gemini API Key in .env");
             }
+
+            const genAI = new GoogleGenerativeAI(apiKey);
+
+            // Reconstruct history (starts with 'user', alternates perfectly)
+            const raw = newMessages.slice(1, -1);
+            const filteredHistory = [];
+            let nextRole = 'user';
+            for (const m of raw) {
+                const mappedRole = m.role === 'bot' ? 'model' : 'user';
+                if (mappedRole === nextRole) {
+                    filteredHistory.push({ role: mappedRole, parts: [{ text: m.text }] });
+                    nextRole = nextRole === 'user' ? 'model' : 'user';
+                }
+            }
+
+            // Function to attempt chat with a specific model
+            const attemptChat = async (modelName) => {
+                const model = genAI.getGenerativeModel({
+                    model: modelName,
+                    systemInstruction: SYSTEM_PROMPT + `\n\nLive POS Context:\n${salesContext}`
+                });
+                const chat = model.startChat({ history: filteredHistory });
+                const result = await chat.sendMessage(text);
+                const response = await result.response;
+                return response.text();
+            };
+
+            let reply = '';
+            try {
+                // Try 2.5 Flash Lite first as specifically requested
+                reply = await attemptChat("gemini-2.5-flash-lite");
+            } catch (err) {
+                const errStr = String(err.message);
+                if (errStr.includes('404') || errStr.includes('429') || errStr.includes('not found') || errStr.includes('quota')) {
+                    console.log(`Fallback: gemini-2.5-flash-lite failed. Trying gemini-1.5-flash...`);
+                    // Fallback to 1.5 Flash which has much better availability and quota
+                    reply = await attemptChat("gemini-1.5-flash");
+                } else {
+                    throw err; // Re-throw if it's a different kind of error (like history order)
+                }
+            }
+
+            setMessages(prev => [...prev, { role: 'bot', text: reply }]);
         } catch (e) {
-            console.error('Chat error:', e);
-            setMessages(prev => [...prev, { role: 'bot', text: 'Sorry, I encountered an error. Please try again.' }]);
+            console.error('Gemini Chat error:', e);
+            let fallback = "I encountered an error with the AI. ";
+            if (String(e.message).includes('429')) {
+                fallback = "The AI is currently busy or out of quota. Please wait about 60 seconds and try again.";
+            } else if (String(e.message).includes('404')) {
+                fallback = "The requested AI model (2.0/1.5) was not found in your region or account.";
+            } else if (String(e.message).includes('history')) {
+                fallback = "There was a conversation sync error. Try refreshing the tab.";
+            }
+            setMessages(prev => [...prev, { role: 'bot', text: fallback }]);
         }
         setIsChatLoading(false);
+    };
+
+    // Helper to render markdown-style bot messages (bolding, lists, etc)
+    const renderBotMessage = (text) => {
+        // 1. Split by double asterisks for bolding: **text**
+        const parts = text.split(/(\*\*.*?\*\*)/g);
+
+        return (
+            <Text style={s.bubbleText}>
+                {parts.map((part, index) => {
+                    if (part.startsWith('**') && part.endsWith('**')) {
+                        // Bold part
+                        return (
+                            <Text key={index} style={{ fontWeight: '800', color: '#1f2937' }}>
+                                {part.slice(2, -2)}
+                            </Text>
+                        );
+                    }
+
+                    // Handle line breaks and basic lists
+                    const lines = part.split('\n');
+                    return lines.map((line, lIndex) => {
+                        let content = line;
+
+                        // Basic bullet point recognition
+                        if (line.trim().startsWith('- ') || line.trim().startsWith('* ')) {
+                            content = '  • ' + line.trim().substring(2);
+                        }
+
+                        return (
+                            <Text key={`${index}-${lIndex}`}>
+                                {content}
+                                {lIndex < lines.length - 1 ? '\n' : ''}
+                            </Text>
+                        );
+                    });
+                })}
+            </Text>
+        );
     };
 
     return (
@@ -254,9 +329,19 @@ export default function AITab() {
                 >
                     {messages.map((m, i) => (
                         <View key={i} style={[s.bubble, m.role === 'user' ? s.bubbleUser : s.bubbleBot]}>
-                            {m.role === 'bot' && <Bot color="#8b5cf6" size={14} style={{ marginTop: 2 }} />}
-                            <Text style={[s.bubbleText, m.role === 'user' && s.bubbleTextUser]}>{m.text}</Text>
-                            {m.role === 'user' && <User color="#fff" size={14} style={{ marginTop: 2 }} />}
+                            {m.role === 'bot' ? (
+                                <>
+                                    <Bot color="#8b5cf6" size={14} style={{ marginTop: 4, marginRight: 8 }} />
+                                    <View style={{ flex: 1 }}>
+                                        {renderBotMessage(m.text)}
+                                    </View>
+                                </>
+                            ) : (
+                                <>
+                                    <Text style={[s.bubbleText, s.bubbleTextUser]}>{m.text}</Text>
+                                    <User color="#fff" size={14} style={{ marginTop: 2, marginLeft: 8 }} />
+                                </>
+                            )}
                         </View>
                     ))}
                     {isChatLoading && (
@@ -304,11 +389,11 @@ const s = StyleSheet.create({
     refreshPredBtn: { alignSelf: 'center', paddingHorizontal: 20, paddingVertical: 8, backgroundColor: '#f5f3ff', borderRadius: 20 },
     refreshPredText: { color: '#8b5cf6', fontWeight: '700', fontSize: 13 },
 
-    chatContainer: { backgroundColor: '#fff', borderRadius: 16, elevation: 2, overflow: 'hidden', maxHeight: 360 },
+    chatContainer: { flex: 3, backgroundColor: '#fff', borderRadius: 16, elevation: 2, overflow: 'hidden', minHeight: 350 },
     chatHeader: { flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderColor: '#f3f4f6', gap: 8 },
     chatTitle: { fontSize: 16, fontWeight: '700', color: '#1f2937', flex: 1 },
     chatBadge: { backgroundColor: '#f5f3ff', color: '#8b5cf6', fontSize: 11, fontWeight: '700', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
-    chatMessages: { flex: 1, padding: 12, maxHeight: 220 },
+    chatMessages: { flex: 1, padding: 12 },
     bubble: { flexDirection: 'row', gap: 8, marginBottom: 10, maxWidth: '85%', alignItems: 'flex-start' },
     bubbleBot: { alignSelf: 'flex-start', backgroundColor: '#f5f3ff', padding: 12, borderRadius: 14, borderBottomLeftRadius: 4 },
     bubbleUser: { alignSelf: 'flex-end', backgroundColor: '#8b5cf6', padding: 12, borderRadius: 14, borderBottomRightRadius: 4 },
