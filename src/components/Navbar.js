@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, StyleSheet, TouchableOpacity, Text, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { LayoutGrid, ShoppingCart, ChefHat, BarChart2, LogOut, Settings, Shield, Briefcase, UserCheck } from 'lucide-react-native';
+import { LayoutGrid, ShoppingCart, ChefHat, BarChart2, LogOut, Settings, Shield, Briefcase, UserCheck, Archive } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 
 const ROLE_ICONS = {
@@ -45,6 +45,11 @@ export default function Navbar() {
                 {perms.admin && (
                     <TouchableOpacity style={styles.iconContainer} onPress={() => navigation.navigate('Admin')}>
                         <LayoutGrid color="#4b5563" size={26} />
+                    </TouchableOpacity>
+                )}
+                {perms.inventory && (
+                    <TouchableOpacity style={styles.iconContainer} onPress={() => navigation.navigate('Inventory')}>
+                        <Archive color="#4b5563" size={26} />
                     </TouchableOpacity>
                 )}
                 {perms.pos && (

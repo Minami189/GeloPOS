@@ -7,6 +7,7 @@ import { History, X, CheckCircle } from 'lucide-react-native';
 export default function KitchenScreen() {
     const [orders, setOrders] = useState([]);
     const [currentTime, setCurrentTime] = useState(new Date());
+    const [stockAlerts, setStockAlerts] = useState([]);
 
     // Confirmation modal
     const [confirmVisible, setConfirmVisible] = useState(false);
@@ -19,6 +20,7 @@ export default function KitchenScreen() {
     useFocusEffect(
         React.useCallback(() => {
             loadPendingOrders();
+            loadStockAlerts();
             const interval = setInterval(() => setCurrentTime(new Date()), 1000);
             return () => clearInterval(interval);
         }, [])
@@ -42,6 +44,26 @@ export default function KitchenScreen() {
             }
             setOrders(structuredOrders);
         } catch (e) { console.error("Failed to load kitchen queue", e); }
+    };
+
+    const loadStockAlerts = async () => {
+        try {
+            const db = await getDBConnection();
+            const ingredientsRes = await db.getAllAsync('SELECT * FROM ingredients WHERE deleted_at IS NULL');
+            let alerts = [];
+            const nowMs = Date.now();
+            (ingredientsRes || []).forEach(ing => {
+                if (ing.reset_timer_days > 0 && ing.last_reset_at) {
+                    const lastReset = new Date(ing.last_reset_at);
+                    lastReset.setHours(0, 0, 0, 0);
+                    const nextReset = new Date(lastReset.getTime() + ing.reset_timer_days * 24 * 60 * 60 * 1000);
+                    if (new Date() >= nextReset) {
+                        alerts.push(`Reset Overdue: ${ing.name}`);
+                    }
+                }
+            });
+            setStockAlerts(alerts);
+        } catch (e) { console.error("Failed to load stock alerts", e); }
     };
 
     // Step 1: tap "Complete Order" → show confirmation modal
@@ -146,6 +168,12 @@ export default function KitchenScreen() {
                 </TouchableOpacity>
             </View>
 
+            {stockAlerts.length > 0 && (
+                <View style={styles.alertBanner}>
+                    <Text style={styles.alertBannerText}>⚠️ Warning Requires Action: {stockAlerts.join('  •  ')}</Text>
+                </View>
+            )}
+
             <FlatList
                 data={orders}
                 numColumns={3}
@@ -247,8 +275,10 @@ export default function KitchenScreen() {
 const styles = StyleSheet.create({
     container: { flex: 1, padding: 40, backgroundColor: '#f8f9fa' },
 
-    headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 30 },
+    headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
     headerTitle: { fontSize: 32, fontWeight: 'bold', color: '#1f2937' },
+    alertBanner: { backgroundColor: '#fef2f2', padding: 12, borderRadius: 8, marginBottom: 20, borderWidth: 1, borderColor: '#f87171' },
+    alertBannerText: { color: '#b91c1c', fontWeight: 'bold', fontSize: 14, textAlign: 'center' },
     historyBtn: {
         flexDirection: 'row',
         alignItems: 'center',

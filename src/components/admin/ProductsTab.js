@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, TextInput, Modal, Image, ScrollView, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, TextInput, Modal, Image, ScrollView, Alert, KeyboardAvoidingView, Platform } from 'react-native';
 import { getDBConnection } from '../../lib/database';
 import { deleteRecordFromSupabase } from '../../lib/syncService';
 import { supabase } from '../../lib/supabase';
@@ -71,9 +71,14 @@ export default function ProductsTab() {
             const catRes = await db.getAllAsync('SELECT * FROM categories WHERE deleted_at IS NULL');
             const ingRes = await db.getAllAsync('SELECT * FROM ingredients WHERE deleted_at IS NULL');
 
+            const formattedIngs = (ingRes || []).map(ing => ({
+                ...ing,
+                displayName: `${ing.name} (${ing.unit})`
+            }));
+
             setProducts(prodRes || []);
             setCategories(catRes || []);
-            setIngredientsList(ingRes || []);
+            setIngredientsList(formattedIngs);
         } catch (error) {
             console.error("Failed to load products data", error);
         }
@@ -294,7 +299,11 @@ export default function ProductsTab() {
 
             // Always reload ingredients and categories fresh so newly-added ones are available
             const freshIngredients = await db.getAllAsync('SELECT * FROM ingredients WHERE deleted_at IS NULL ORDER BY name ASC');
-            setIngredientsList(freshIngredients || []);
+            const formattedFreshIngs = (freshIngredients || []).map(ing => ({
+                ...ing,
+                displayName: `${ing.name} (${ing.unit})`
+            }));
+            setIngredientsList(formattedFreshIngs);
 
             const freshCategories = await db.getAllAsync('SELECT * FROM categories WHERE deleted_at IS NULL');
             setCategories(freshCategories || []);
@@ -392,7 +401,7 @@ export default function ProductsTab() {
             />
 
             <Modal visible={modalVisible} transparent animationType="slide">
-                <View style={styles.modalOverlay}>
+                <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
                         <View style={styles.modalHeader}>
                             <Text style={styles.modalTitle}>{editingItem ? 'Edit Product' : 'Add Product'}</Text>
@@ -439,10 +448,11 @@ export default function ProductsTab() {
                                         <View style={{ flex: 1, marginRight: 10 }}>
                                             <Text style={{ fontWeight: 'bold', fontSize: 15, color: '#374151', marginBottom: 5 }}>{v.name}</Text>
                                             <DropdownPicker
-                                                items={[{ id: null, name: "No Ingredient (Leave Empty)" }, ...ingredientsList]}
+                                                items={[{ id: null, displayName: "No Ingredient (Leave Empty)" }, ...ingredientsList]}
                                                 selectedId={v.ingredient_id}
                                                 onSelect={(id) => updateVariantIngredient(i, id)}
                                                 placeholder="Link Ingredient (Optional)"
+                                                displayKey="displayName"
                                             />
                                         </View>
                                         {v.ingredient_id && (
@@ -477,6 +487,7 @@ export default function ProductsTab() {
                                             selectedId={r.ingredient_id}
                                             onSelect={(id) => updateRecipeIngredient(i, id)}
                                             placeholder="Select Ingredient"
+                                            displayKey="displayName"
                                         />
                                     </View>
                                     <TextInput style={[styles.input, { flex: 1, marginHorizontal: 10, alignSelf: 'flex-start', marginTop: 5 }]} value={r.quantity.toString()} onChangeText={(val) => updateRecipeQuantity(i, val)} keyboardType="numeric" placeholder="Qty" />
@@ -497,7 +508,7 @@ export default function ProductsTab() {
                             </TouchableOpacity>
                         </View>
                     </View>
-                </View>
+                </KeyboardAvoidingView>
             </Modal>
         </View>
     );
