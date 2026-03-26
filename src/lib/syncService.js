@@ -41,7 +41,10 @@ export const syncOrdersToSupabase = async () => {
                 created_at: order.created_at,
                 device_id: order.device_id,
                 customer_name: order.customer_name,
-                daily_order_number: order.daily_order_number
+                daily_order_number: order.daily_order_number,
+                discount_id: order.discount_id,
+                discount_name: order.discount_name,
+                discount_amount: order.discount_amount
             };
 
             if (existingOrder) {
@@ -110,7 +113,8 @@ export const syncCatalogToSupabase = async () => {
             { local: 'ingredients', supabase: 'pos_ingredients' },
             { local: 'products', supabase: 'pos_products' },
             { local: 'product_variants', supabase: 'pos_product_variants' },
-            { local: 'recipes', supabase: 'pos_recipes' }
+            { local: 'recipes', supabase: 'pos_recipes' },
+            { local: 'discounts', supabase: 'pos_discounts' }
         ];
 
         for (const tableDef of tablesToSync) {
@@ -319,6 +323,7 @@ const _fetchCatalogRecords = async (db) => {
         { local: 'products', supabase: 'pos_products' },
         { local: 'product_variants', supabase: 'pos_product_variants' },
         { local: 'recipes', supabase: 'pos_recipes' },
+        { local: 'discounts', supabase: 'pos_discounts' },
     ];
 
     const cloudData = {};
@@ -465,11 +470,14 @@ export const fetchOrdersFromSupabase = async () => {
                     const deviceId = order.device_id || 'UNKNOWN';
                     const isLocal = deviceId === localDevId ? 1 : 0;
                     const dailyNum = order.daily_order_number || 0;
+                    const discId = order.discount_id || null;
+                    const discName = order.discount_name || null;
+                    const discAmt = parseFloat(order.discount_amount || 0);
 
                     await db.runAsync(
-                        `INSERT OR REPLACE INTO orders (id, total_amount, cash_received, change_amount, status, created_at, customer_name, device_id, is_local, daily_order_number, synced)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-                        sId, totalAmount, cashRecv, changeAmt, status, createdAt, custName, deviceId, isLocal, dailyNum
+                        `INSERT OR REPLACE INTO orders (id, total_amount, cash_received, change_amount, status, created_at, customer_name, device_id, is_local, daily_order_number, discount_id, discount_name, discount_amount, synced)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+                        sId, totalAmount, cashRecv, changeAmt, status, createdAt, custName, deviceId, isLocal, dailyNum, discId, discName, discAmt
                     );
                 }
 

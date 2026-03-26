@@ -393,8 +393,8 @@ export default function POSScreen() {
                 <View style={styles.cartFooter}>
                     {discounts.length > 0 && (
                         <View style={{ marginBottom: 15 }}>
-                            <Text style={{ fontSize: 13, color: '#6b7280', fontWeight: 'bold', marginBottom: 6 }}>Apply Discount:</Text>
-                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                            <Text style={{ fontSize: 13, color: '#6b7280', fontWeight: 'bold', marginBottom: 8 }}>Apply Discount:</Text>
+                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                                 <TouchableOpacity 
                                     style={[styles.discountChip, selectedDiscountId === null && styles.discountChipActive]}
                                     onPress={() => setSelectedDiscountId(null)}
@@ -410,7 +410,7 @@ export default function POSScreen() {
                                         <Text style={[styles.discountChipText, selectedDiscountId === d.id && styles.discountChipTextActive]}>{d.name} ({d.percentage}%)</Text>
                                     </TouchableOpacity>
                                 ))}
-                            </ScrollView>
+                            </View>
                         </View>
                     )}
 
@@ -641,7 +641,7 @@ const styles = StyleSheet.create({
     variantItemText: { fontSize: 16, fontWeight: '500', color: '#374151' },
 
     // Warning Modal
-    warningModal: { width: 460, backgroundColor: '#fff', borderRadius: 16, padding: 30, elevation: 10 },
+    warningModal: { width: '90%', maxWidth: 460, backgroundColor: '#fff', borderRadius: 16, padding: 30, elevation: 10 },
     warningTitle: { fontSize: 22, fontWeight: 'bold', color: '#b45309', marginBottom: 6 },
     warningSubtitle: { fontSize: 14, color: '#6b7280', marginBottom: 4 },
     warningItem: { backgroundColor: '#fef3c7', borderRadius: 8, padding: 10, marginBottom: 8, borderLeftWidth: 3, borderLeftColor: '#f59e0b' },
@@ -653,7 +653,7 @@ const styles = StyleSheet.create({
     warnContinueBtn: { flex: 1, paddingVertical: 14, borderRadius: 10, backgroundColor: '#f59e0b', alignItems: 'center' },
     warnContinueText: { fontWeight: 'bold', color: '#fff', fontSize: 15 },
 
-    paymentModal: { width: 500, backgroundColor: '#fff', borderRadius: 16, padding: 35, elevation: 10 },
+    paymentModal: { width: '90%', maxWidth: 500, backgroundColor: '#fff', borderRadius: 16, padding: 35, elevation: 10 },
     modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 25 },
     modalTitle: { fontSize: 24, fontWeight: 'bold', color: '#1f2937' },
 
