@@ -80,6 +80,14 @@ export const syncOrdersToSupabase = async () => {
             }));
 
             if (itemsToInsert.length > 0) {
+                // Delete existing items for this supabase order before reinserting
+                // to avoid duplicates when the order is synced again (e.g. status update)
+                const { error: delItemsError } = await supabase
+                    .from('pos_order_items')
+                    .delete()
+                    .eq('supabase_order_id', orderData.id);
+                if (delItemsError) console.warn('Could not delete old items before reinserting:', delItemsError.message);
+
                 const { error: itemsError } = await supabase.from('pos_order_items').insert(itemsToInsert);
                 if (itemsError) throw itemsError;
             }
@@ -361,12 +369,11 @@ const _fetchCatalogRecords = async (db) => {
         });
     }
 
-    // order_items has FK references to products and product_variants WITHOUT ON DELETE CASCADE.
-    // If we try to DELETE FROM products/product_variants while order_items still references
-    // them, SQLite will throw a FK violation. Null out those references first so the
-    // catalog delete can proceed cleanly. Orders/order_items are re-inserted by
-    // fetchOrdersFromSupabase, so this is safe.
-    await db.runAsync('UPDATE order_items SET product_id = NULL, variant_id = NULL WHERE product_id IS NOT NULL OR variant_id IS NOT NULL');
+    // order_items has FK references to products and product_variants.
+    // With PRAGMA foreign_keys = OFF (set by the caller for fetchOrdersFromSupabase),
+    // we can safely delete catalog tables without nulling order_items first.
+    // We skip the NULL-out step here to avoid permanently breaking product references
+    // if this function is ever called while order_items still exist.
 
     // Delete in reverse order (children first) so remaining FK constraints are respected
     for (let i = tables.length - 1; i >= 0; i--) {
@@ -482,10 +489,24 @@ export const fetchOrdersFromSupabase = async () => {
                     );
                 }
 
+                // Build a map: supabase_order_id -> locally assigned order id (local_id)
+                // so items without local_order_id can still be matched correctly
+                const supabaseToLocalId = {};
+                for (const order of uniqueOrders) {
+                    const localId = parseInt(order.local_id, 10) || parseInt(order.id, 10);
+                    const supabaseId = parseInt(order.id, 10);
+                    if (supabaseId) supabaseToLocalId[supabaseId] = localId;
+                }
+
                 // Re-insert order items
                 for (const item of uniqueItems) {
                     const itemId = parseInt(item.id, 10);
-                    const orderId = parseInt(item.local_order_id, 10) || parseInt(item.supabase_order_id, 10);
+                    // Prefer local_order_id; fall back to supabase→local map
+                    const localOrderId = parseInt(item.local_order_id, 10);
+                    const supabaseOrderId = parseInt(item.supabase_order_id, 10);
+                    const orderId = (localOrderId && !isNaN(localOrderId))
+                        ? localOrderId
+                        : (supabaseToLocalId[supabaseOrderId] || supabaseOrderId);
                     const productId = item.product_id ? parseInt(item.product_id, 10) : null;
                     const variantId = item.variant_id ? parseInt(item.variant_id, 10) : null;
                     const quantity = parseInt(item.quantity || 1, 10);

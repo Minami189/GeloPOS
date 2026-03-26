@@ -36,7 +36,7 @@ export default function KitchenScreen() {
                 const itemsRes = await db.getAllAsync(`
                     SELECT oi.*, p.name as product_name, pv.name as variant_name 
                     FROM order_items oi
-                    JOIN products p ON oi.product_id = p.id
+                    LEFT JOIN products p ON oi.product_id = p.id
                     LEFT JOIN product_variants pv ON oi.variant_id = pv.id
                     WHERE oi.order_id = ?
                 `, o.id);
