@@ -84,7 +84,8 @@ export const initDB = async () => {
                 daily_order_number INTEGER,
                 discount_id INTEGER,
                 discount_name TEXT,
-                discount_amount REAL DEFAULT 0
+                discount_amount REAL DEFAULT 0,
+                order_type TEXT DEFAULT 'Dine In'
             );
 
             CREATE TABLE IF NOT EXISTS order_items (
@@ -245,6 +246,18 @@ export const initDB = async () => {
             }
         } catch (err) {
             console.error('Migration error for orders deleted_at:', err);
+        }
+
+        // --- Migration: Add 'order_type' column to orders if missing ---
+        try {
+            const ordersInfo = await db.getAllAsync(`PRAGMA table_info(orders)`);
+            const hasOrderType = ordersInfo.some(col => col.name === 'order_type');
+            if (!hasOrderType) {
+                await db.execAsync(`ALTER TABLE orders ADD COLUMN order_type TEXT DEFAULT 'Dine In';`);
+                console.log("Added 'order_type' column to orders table");
+            }
+        } catch (err) {
+            console.error('Migration error for orders order_type:', err);
         }
 
         // --- Migration: Case-insensitive unique index for ingredient names ---

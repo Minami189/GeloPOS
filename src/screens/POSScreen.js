@@ -21,6 +21,7 @@ export default function POSScreen() {
     const [paymentModalVisible, setPaymentModalVisible] = useState(false);
     const [cashReceived, setCashReceived] = useState('');
     const [customerName, setCustomerName] = useState('');
+    const [orderType, setOrderType] = useState('Dine In');
     const [orderComplete, setOrderComplete] = useState(false);
     const [lastOrderDisplay, setLastOrderDisplay] = useState(null);
     const [finalChange, setFinalChange] = useState(0);
@@ -135,6 +136,7 @@ export default function POSScreen() {
         if (cart.length === 0) return;
         setCashReceived('');
         setCustomerName('');
+        setOrderType('Dine In');
         setOrderComplete(false);
         setLastOrderDisplay(null);
         setPaymentModalVisible(true);
@@ -252,11 +254,12 @@ export default function POSScreen() {
 
             // Create Order
             const res = await db.runAsync(
-                'INSERT INTO orders (total_amount, cash_received, change_amount, status, customer_name, device_id, is_local, daily_order_number, discount_id, discount_name, discount_amount) VALUES (?, ?, ?, "Pending", ?, ?, 1, ?, ?, ?, ?)',
+                'INSERT INTO orders (total_amount, cash_received, change_amount, status, customer_name, device_id, is_local, daily_order_number, discount_id, discount_name, discount_amount, order_type) VALUES (?, ?, ?, "Pending", ?, ?, 1, ?, ?, ?, ?, ?)',
                 totalAmount, cash, changeAmount, trimmedName, localDevId, dailyOrderNum,
                 appliedDiscount ? appliedDiscount.id : null,
                 appliedDiscount ? appliedDiscount.name : null,
-                discountValue
+                discountValue,
+                orderType
             );
             
             const orderId = res.lastInsertRowId;
@@ -527,6 +530,23 @@ export default function POSScreen() {
                                 <Text style={styles.billTotalAmount}>₱{finalAmountDue.toFixed(2)}</Text>
                             </View>
 
+                            {/* Order Type */}
+                            <Text style={styles.label}>Order Type</Text>
+                            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 20 }}>
+                                <TouchableOpacity
+                                    style={[styles.orderTypeChip, orderType === 'Dine In' && styles.orderTypeChipDineIn]}
+                                    onPress={() => setOrderType('Dine In')}
+                                >
+                                    <Text style={[styles.orderTypeChipText, orderType === 'Dine In' && styles.orderTypeChipTextDineIn]}>🍽️ Dine In</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.orderTypeChip, orderType === 'Take Out' && styles.orderTypeChipTakeOut]}
+                                    onPress={() => setOrderType('Take Out')}
+                                >
+                                    <Text style={[styles.orderTypeChipText, orderType === 'Take Out' && styles.orderTypeChipTextTakeOut]}>🥡 Take Out</Text>
+                                </TouchableOpacity>
+                            </View>
+
                             {/* Customer Name */}
                             <Text style={styles.label}>Customer Name <Text style={{ color: '#9ca3af', fontWeight: 'normal' }}>(optional)</Text></Text>
                             <TextInput
@@ -671,5 +691,12 @@ const styles = StyleSheet.create({
     discountChip: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, backgroundColor: '#f3f4f6', borderWidth: 1, borderColor: '#e5e7eb' },
     discountChipActive: { backgroundColor: '#fef3c7', borderColor: '#f59e0b' },
     discountChipText: { fontSize: 13, color: '#6b7280', fontWeight: 'bold' },
-    discountChipTextActive: { color: '#d97706' }
+    discountChipTextActive: { color: '#d97706' },
+
+    orderTypeChip: { flex: 1, paddingVertical: 12, borderRadius: 20, backgroundColor: '#f3f4f6', borderWidth: 1.5, borderColor: '#e5e7eb', alignItems: 'center', justifyContent: 'center' },
+    orderTypeChipDineIn: { backgroundColor: '#ecfdf5', borderColor: '#10b981' },
+    orderTypeChipTakeOut: { backgroundColor: '#eff6ff', borderColor: '#3b82f6' },
+    orderTypeChipText: { fontSize: 15, color: '#6b7280', fontWeight: 'bold' },
+    orderTypeChipTextDineIn: { color: '#059669' },
+    orderTypeChipTextTakeOut: { color: '#2563eb' },
 });

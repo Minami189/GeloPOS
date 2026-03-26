@@ -130,10 +130,17 @@ export default function TransactionsTab() {
                         {new Date(item.created_at).toLocaleDateString()} - {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </Text>
                 </View>
-                <View style={[styles.statusBadge, { backgroundColor: item.status === 'Completed' ? '#dcfce7' : '#fef9c3' }]}>
-                    <Text style={[styles.statusText, { color: item.status === 'Completed' ? '#166534' : '#854d0e' }]}>
-                        {item.status}
-                    </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <View style={[styles.statusBadge, { backgroundColor: item.status === 'Completed' ? '#dcfce7' : '#fef9c3' }]}>
+                        <Text style={[styles.statusText, { color: item.status === 'Completed' ? '#166534' : '#854d0e' }]}>
+                            {item.status}
+                        </Text>
+                    </View>
+                    <View style={[styles.orderTypeBadge, { backgroundColor: item.order_type === 'Take Out' ? '#dbeafe' : '#dcfce7' }]}>
+                        <Text style={[styles.orderTypeBadgeText, { color: item.order_type === 'Take Out' ? '#1d4ed8' : '#166534' }]}>
+                            {item.order_type === 'Take Out' ? '🥡 Take Out' : '🍽️ Dine In'}
+                        </Text>
+                    </View>
                 </View>
             </View>
             
@@ -473,5 +480,14 @@ const styles = StyleSheet.create({
         color: '#6b7280',
         fontSize: 12,
         fontWeight: '500'
+    },
+    orderTypeBadge: {
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 12
+    },
+    orderTypeBadgeText: {
+        fontSize: 12,
+        fontWeight: 'bold'
     }
 });

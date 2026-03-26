@@ -44,7 +44,8 @@ export const syncOrdersToSupabase = async () => {
                 daily_order_number: order.daily_order_number,
                 discount_id: order.discount_id,
                 discount_name: order.discount_name,
-                discount_amount: order.discount_amount
+                discount_amount: order.discount_amount,
+                order_type: order.order_type
             };
 
             if (existingOrder) {
@@ -475,9 +476,9 @@ export const fetchOrdersFromSupabase = async () => {
                     const discAmt = parseFloat(order.discount_amount || 0);
 
                     await db.runAsync(
-                        `INSERT OR REPLACE INTO orders (id, total_amount, cash_received, change_amount, status, created_at, customer_name, device_id, is_local, daily_order_number, discount_id, discount_name, discount_amount, synced)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-                        sId, totalAmount, cashRecv, changeAmt, status, createdAt, custName, deviceId, isLocal, dailyNum, discId, discName, discAmt
+                        `INSERT OR REPLACE INTO orders (id, total_amount, cash_received, change_amount, status, created_at, customer_name, device_id, is_local, daily_order_number, discount_id, discount_name, discount_amount, order_type, synced)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+                        sId, totalAmount, cashRecv, changeAmt, status, createdAt, custName, deviceId, isLocal, dailyNum, discId, discName, discAmt, order.order_type || 'Dine In'
                     );
                 }
 

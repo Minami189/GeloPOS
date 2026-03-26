@@ -181,12 +181,21 @@ export default function KitchenScreen() {
                 renderItem={({ item }) => (
                     <View style={styles.orderCard}>
                         <View style={styles.cardHeader}>
-                            <View>
+                            <View style={{ flex: 1 }}>
                                 <Text style={styles.orderNumber}>{orderLabel(item)}</Text>
                             </View>
                             <View style={{ alignItems: 'flex-end' }}>
                                 <Text style={styles.timeLabel}>Time Elapsed</Text>
                                 <Text style={styles.timeValue}>{formatElapsedTime(item.created_at)}</Text>
+                            </View>
+                        </View>
+
+                        {/* Order Type Pill */}
+                        <View style={{ marginBottom: 15, flexDirection: 'row' }}>
+                            <View style={[styles.orderTypeBadge, { backgroundColor: item.order_type === 'Take Out' ? '#dbeafe' : '#dcfce7' }]}>
+                                <Text style={[styles.orderTypeBadgeText, { color: item.order_type === 'Take Out' ? '#1d4ed8' : '#166534' }]}>
+                                    {item.order_type === 'Take Out' ? '🥡 Take Out' : '🍽️ Dine In'}
+                                </Text>
                             </View>
                         </View>
 
@@ -252,7 +261,16 @@ export default function KitchenScreen() {
                                 {historyOrders.map(order => (
                                     <View key={order.id} style={styles.historyCard}>
                                         <View style={styles.historyCardHeader}>
-                                            <Text style={styles.historyOrderNum}>{orderLabel(order)}</Text>
+                                            <View style={{ flex: 1 }}>
+                                                <Text style={styles.historyOrderNum}>{orderLabel(order)}</Text>
+                                                <View style={{ flexDirection: 'row', marginTop: 5 }}>
+                                                    <View style={[styles.orderTypeBadge, { backgroundColor: order.order_type === 'Take Out' ? '#dbeafe' : '#dcfce7', paddingVertical: 2, paddingHorizontal: 8 }]}>
+                                                        <Text style={[styles.orderTypeBadgeText, { color: order.order_type === 'Take Out' ? '#1d4ed8' : '#166534', fontSize: 10 }]}>
+                                                            {order.order_type === 'Take Out' ? '🥡 Take Out' : '🍽️ Dine In'}
+                                                        </Text>
+                                                    </View>
+                                                </View>
+                                            </View>
                                             <Text style={styles.historyTotal}>₱{order.total_amount.toFixed(2)}</Text>
                                         </View>
                                         <Text style={styles.historyDate}>{formatDateTime(order.created_at)}</Text>
@@ -371,4 +389,15 @@ const styles = StyleSheet.create({
     historyTotal: { fontSize: 16, fontWeight: 'bold', color: '#10b981' },
     historyDate: { fontSize: 12, color: '#9ca3af', marginBottom: 8 },
     historyItem: { fontSize: 14, color: '#0e0e11ff', marginTop: 3, fontWeight: 'bold' },
+
+    orderTypeBadge: {
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 20,
+        alignSelf: 'flex-start'
+    },
+    orderTypeBadgeText: {
+        fontSize: 13,
+        fontWeight: 'bold'
+    }
 });
