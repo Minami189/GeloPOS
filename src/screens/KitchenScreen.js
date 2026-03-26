@@ -274,9 +274,9 @@ export default function KitchenScreen() {
                                             <Text style={styles.historyTotal}>₱{order.total_amount.toFixed(2)}</Text>
                                         </View>
                                         <Text style={styles.historyDate}>{formatDateTime(order.created_at)}</Text>
-                                        {order.items.map(oi => (
-                                            <Text key={oi.id} style={styles.historyItem}>
-                                                {oi.quantity}x {oi.product_name}{oi.variant_name ? ` (${oi.variant_name})` : ''}
+                                        {order.items.map((oi, idx) => (
+                                            <Text key={`${oi.id}-${idx}`} style={styles.historyItem}>
+                                                {oi.quantity}x {oi.product_name || '(deleted product)'}{oi.variant_name ? ` (${oi.variant_name})` : ''}
                                             </Text>
                                         ))}
                                     </View>

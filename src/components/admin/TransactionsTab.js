@@ -162,8 +162,8 @@ export default function TransactionsTab() {
                 {item.items && item.items.length > 0 && (
                     <View style={styles.itemsListContainer}>
                         <Text style={styles.itemsListLabel}>Items:</Text>
-                        {item.items.map(oi => (
-                            <Text key={oi.id} style={styles.itemRowText}>
+                        {item.items.map((oi, idx) => (
+                            <Text key={`${oi.id}-${idx}`} style={styles.itemRowText}>
                                 {oi.quantity}x {oi.product_name || '(deleted product)'} {oi.variant_name ? `(${oi.variant_name})` : ''}
                             </Text>
                         ))}
