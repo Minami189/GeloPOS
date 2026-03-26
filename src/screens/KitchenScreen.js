@@ -7,6 +7,7 @@ import { History, X, CheckCircle } from 'lucide-react-native';
 export default function KitchenScreen() {
     const [orders, setOrders] = useState([]);
     const [currentTime, setCurrentTime] = useState(new Date());
+    const [stockAlerts, setStockAlerts] = useState([]);
 
     // Confirmation modal
     const [confirmVisible, setConfirmVisible] = useState(false);
@@ -19,6 +20,7 @@ export default function KitchenScreen() {
     useFocusEffect(
         React.useCallback(() => {
             loadPendingOrders();
+            loadStockAlerts();
             const interval = setInterval(() => setCurrentTime(new Date()), 1000);
             return () => clearInterval(interval);
         }, [])
@@ -34,7 +36,7 @@ export default function KitchenScreen() {
                 const itemsRes = await db.getAllAsync(`
                     SELECT oi.*, p.name as product_name, pv.name as variant_name 
                     FROM order_items oi
-                    JOIN products p ON oi.product_id = p.id
+                    LEFT JOIN products p ON oi.product_id = p.id
                     LEFT JOIN product_variants pv ON oi.variant_id = pv.id
                     WHERE oi.order_id = ?
                 `, o.id);
@@ -42,6 +44,26 @@ export default function KitchenScreen() {
             }
             setOrders(structuredOrders);
         } catch (e) { console.error("Failed to load kitchen queue", e); }
+    };
+
+    const loadStockAlerts = async () => {
+        try {
+            const db = await getDBConnection();
+            const ingredientsRes = await db.getAllAsync('SELECT * FROM ingredients WHERE deleted_at IS NULL');
+            let alerts = [];
+            const nowMs = Date.now();
+            (ingredientsRes || []).forEach(ing => {
+                if (ing.reset_timer_days > 0 && ing.last_reset_at) {
+                    const lastReset = new Date(ing.last_reset_at);
+                    lastReset.setHours(0, 0, 0, 0);
+                    const nextReset = new Date(lastReset.getTime() + ing.reset_timer_days * 24 * 60 * 60 * 1000);
+                    if (new Date() >= nextReset) {
+                        alerts.push(`Reset Overdue: ${ing.name}`);
+                    }
+                }
+            });
+            setStockAlerts(alerts);
+        } catch (e) { console.error("Failed to load stock alerts", e); }
     };
 
     // Step 1: tap "Complete Order" → show confirmation modal
@@ -55,8 +77,25 @@ export default function KitchenScreen() {
         setConfirmVisible(false);
         try {
             const db = await getDBConnection();
-            await db.runAsync('UPDATE orders SET status = "Completed" WHERE id = ?', pendingOrderId);
+            // Important: Mark synced = 0 so the status update is pushed to Supabase
+            await db.runAsync('UPDATE orders SET status = "Completed", synced = 0 WHERE id = ?', pendingOrderId);
             loadPendingOrders();
+            // Reload history in the background so it is up to date when next opened
+            const completedOrders = await db.getAllAsync(
+                'SELECT * FROM orders WHERE status = "Completed" ORDER BY created_at DESC LIMIT 50'
+            );
+            let structured = [];
+            for (let o of completedOrders) {
+                const items = await db.getAllAsync(`
+                    SELECT oi.*, p.name as product_name, pv.name as variant_name 
+                    FROM order_items oi
+                    LEFT JOIN products p ON oi.product_id = p.id
+                    LEFT JOIN product_variants pv ON oi.variant_id = pv.id
+                    WHERE oi.order_id = ?
+                `, o.id);
+                structured.push({ ...o, items });
+            }
+            setHistoryOrders(structured);
         } catch (e) { console.error("Failed to complete order", e); }
         setPendingOrderId(null);
     };
@@ -77,7 +116,7 @@ export default function KitchenScreen() {
                 const items = await db.getAllAsync(`
                     SELECT oi.*, p.name as product_name, pv.name as variant_name 
                     FROM order_items oi
-                    JOIN products p ON oi.product_id = p.id
+                    LEFT JOIN products p ON oi.product_id = p.id
                     LEFT JOIN product_variants pv ON oi.variant_id = pv.id
                     WHERE oi.order_id = ?
                 `, o.id);
@@ -88,8 +127,18 @@ export default function KitchenScreen() {
         } catch (e) { console.error("Failed to load order history", e); }
     };
 
+    // Safely parse a date string that may or may not already include timezone info.
+    // Appending 'Z' to a string that already has '+HH:MM' produces an invalid date.
+    const parseDate = (str) => {
+        if (!str) return new Date(NaN);
+        // If it already has a timezone offset or ends with Z, parse as-is
+        if (/[Zz]$/.test(str) || /[+-]\d{2}:\d{2}$/.test(str)) return new Date(str);
+        // Otherwise treat as UTC by appending Z
+        return new Date(str + 'Z');
+    };
+
     const formatElapsedTime = (createdAtStr) => {
-        const createdMs = new Date(createdAtStr + 'Z').getTime();
+        const createdMs = parseDate(createdAtStr).getTime();
         const nowMs = currentTime.getTime();
         const diffSecs = Math.max(0, Math.floor((nowMs - createdMs) / 1000));
         const m = Math.floor(diffSecs / 60);
@@ -99,8 +148,8 @@ export default function KitchenScreen() {
 
     const formatDateTime = (str) => {
         if (!str) return '';
-        const d = new Date(str + 'Z');
-        return d.toLocaleString();
+        const d = parseDate(str);
+        return isNaN(d.getTime()) ? str : d.toLocaleString();
     };
 
     const orderLabel = (order) => {
@@ -119,6 +168,12 @@ export default function KitchenScreen() {
                 </TouchableOpacity>
             </View>
 
+            {stockAlerts.length > 0 && (
+                <View style={styles.alertBanner}>
+                    <Text style={styles.alertBannerText}>⚠️ Warning Requires Action: {stockAlerts.join('  •  ')}</Text>
+                </View>
+            )}
+
             <FlatList
                 data={orders}
                 numColumns={3}
@@ -126,12 +181,21 @@ export default function KitchenScreen() {
                 renderItem={({ item }) => (
                     <View style={styles.orderCard}>
                         <View style={styles.cardHeader}>
-                            <View>
+                            <View style={{ flex: 1 }}>
                                 <Text style={styles.orderNumber}>{orderLabel(item)}</Text>
                             </View>
                             <View style={{ alignItems: 'flex-end' }}>
                                 <Text style={styles.timeLabel}>Time Elapsed</Text>
                                 <Text style={styles.timeValue}>{formatElapsedTime(item.created_at)}</Text>
+                            </View>
+                        </View>
+
+                        {/* Order Type Pill */}
+                        <View style={{ marginBottom: 15, flexDirection: 'row' }}>
+                            <View style={[styles.orderTypeBadge, { backgroundColor: item.order_type === 'Take Out' ? '#dbeafe' : '#dcfce7' }]}>
+                                <Text style={[styles.orderTypeBadgeText, { color: item.order_type === 'Take Out' ? '#1d4ed8' : '#166534' }]}>
+                                    {item.order_type === 'Take Out' ? '🥡 Take Out' : '🍽️ Dine In'}
+                                </Text>
                             </View>
                         </View>
 
@@ -197,13 +261,22 @@ export default function KitchenScreen() {
                                 {historyOrders.map(order => (
                                     <View key={order.id} style={styles.historyCard}>
                                         <View style={styles.historyCardHeader}>
-                                            <Text style={styles.historyOrderNum}>{orderLabel(order)}</Text>
+                                            <View style={{ flex: 1 }}>
+                                                <Text style={styles.historyOrderNum}>{orderLabel(order)}</Text>
+                                                <View style={{ flexDirection: 'row', marginTop: 5 }}>
+                                                    <View style={[styles.orderTypeBadge, { backgroundColor: order.order_type === 'Take Out' ? '#dbeafe' : '#dcfce7', paddingVertical: 2, paddingHorizontal: 8 }]}>
+                                                        <Text style={[styles.orderTypeBadgeText, { color: order.order_type === 'Take Out' ? '#1d4ed8' : '#166534', fontSize: 10 }]}>
+                                                            {order.order_type === 'Take Out' ? '🥡 Take Out' : '🍽️ Dine In'}
+                                                        </Text>
+                                                    </View>
+                                                </View>
+                                            </View>
                                             <Text style={styles.historyTotal}>₱{order.total_amount.toFixed(2)}</Text>
                                         </View>
                                         <Text style={styles.historyDate}>{formatDateTime(order.created_at)}</Text>
-                                        {order.items.map(oi => (
-                                            <Text key={oi.id} style={styles.historyItem}>
-                                                {oi.quantity}x {oi.product_name}{oi.variant_name ? ` (${oi.variant_name})` : ''}
+                                        {order.items.map((oi, idx) => (
+                                            <Text key={`${oi.id}-${idx}`} style={styles.historyItem}>
+                                                {oi.quantity}x {oi.product_name || '(deleted product)'}{oi.variant_name ? ` (${oi.variant_name})` : ''}
                                             </Text>
                                         ))}
                                     </View>
@@ -220,8 +293,10 @@ export default function KitchenScreen() {
 const styles = StyleSheet.create({
     container: { flex: 1, padding: 40, backgroundColor: '#f8f9fa' },
 
-    headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 30 },
+    headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
     headerTitle: { fontSize: 32, fontWeight: 'bold', color: '#1f2937' },
+    alertBanner: { backgroundColor: '#fef2f2', padding: 12, borderRadius: 8, marginBottom: 20, borderWidth: 1, borderColor: '#f87171' },
+    alertBannerText: { color: '#b91c1c', fontWeight: 'bold', fontSize: 14, textAlign: 'center' },
     historyBtn: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -314,4 +389,15 @@ const styles = StyleSheet.create({
     historyTotal: { fontSize: 16, fontWeight: 'bold', color: '#10b981' },
     historyDate: { fontSize: 12, color: '#9ca3af', marginBottom: 8 },
     historyItem: { fontSize: 14, color: '#0e0e11ff', marginTop: 3, fontWeight: 'bold' },
+
+    orderTypeBadge: {
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 20,
+        alignSelf: 'flex-start'
+    },
+    orderTypeBadgeText: {
+        fontSize: 13,
+        fontWeight: 'bold'
+    }
 });

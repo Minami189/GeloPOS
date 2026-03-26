@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, TextInput, Modal, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, TextInput, Modal, Alert, KeyboardAvoidingView, Platform } from 'react-native';
 import { getDBConnection } from '../../lib/database';
 import { deleteRecordFromSupabase } from '../../lib/syncService';
 import { supabase } from '../../lib/supabase';
@@ -120,7 +120,7 @@ export default function CategoriesTab() {
             />
 
             <Modal visible={modalVisible} transparent animationType="fade">
-                <View style={styles.modalOverlay}>
+                <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
                         <View style={styles.modalHeader}>
                             <Text style={styles.modalTitle}>{editingItem ? 'Edit Category' : 'Add Category'}</Text>
@@ -141,7 +141,7 @@ export default function CategoriesTab() {
                             </TouchableOpacity>
                         </View>
                     </View>
-                </View>
+                </KeyboardAvoidingView>
             </Modal>
         </View>
     );

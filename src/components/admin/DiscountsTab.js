@@ -1,63 +1,57 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, TextInput, Modal, Alert, KeyboardAvoidingView, Platform } from 'react-native';
 import { getDBConnection } from '../../lib/database';
 import { deleteRecordFromSupabase } from '../../lib/syncService';
+import { supabase } from '../../lib/supabase';
 import { Plus, Edit2, Trash2, X } from 'lucide-react-native';
-import { useFocusEffect } from '@react-navigation/native';
 
-export default function IngredientsTab() {
-    const [ingredients, setIngredients] = useState([]);
+export default function DiscountsTab() {
+    const [discounts, setDiscounts] = useState([]);
     const [modalVisible, setModalVisible] = useState(false);
     const [editingItem, setEditingItem] = useState(null);
-
-    // Form states
     const [name, setName] = useState('');
-    const [unit, setUnit] = useState('');
-    const [stock, setStock] = useState('');
-    const [cost, setCost] = useState('');
+    const [percentage, setPercentage] = useState('');
 
-    useFocusEffect(
-        useCallback(() => {
-            loadIngredients();
-        }, [])
-    );
+    useEffect(() => {
+        loadDiscounts();
+    }, []);
 
-    const loadIngredients = async () => {
+    const loadDiscounts = async () => {
         try {
             const db = await getDBConnection();
-            const result = await db.getAllAsync('SELECT * FROM ingredients WHERE deleted_at IS NULL ORDER BY name ASC');
-            setIngredients(result || []);
+            const result = await db.getAllAsync('SELECT * FROM discounts WHERE deleted_at IS NULL ORDER BY name ASC');
+            setDiscounts(result || []);
         } catch (error) {
-            console.error("Failed to load ingredients", error);
+            console.error("Failed to load discounts", error);
         }
     };
 
     const handleSave = async () => {
-        if (!name || !unit) return;
+        if (!name || !percentage) return;
+        const percValue = parseFloat(percentage);
+        if (isNaN(percValue) || percValue <= 0 || percValue > 100) {
+            Alert.alert("Invalid input", "Please enter a valid percentage between 1 and 100.");
+            return;
+        }
+
         try {
             const db = await getDBConnection();
             if (editingItem) {
-                await db.runAsync(
-                    'UPDATE ingredients SET name = ?, unit = ?, stock_quantity = ?, cost_per_unit = ? WHERE id = ?',
-                    name, unit, parseFloat(stock) || 0, parseFloat(cost) || 0, editingItem.id
-                );
+                await db.runAsync('UPDATE discounts SET name = ?, percentage = ? WHERE id = ?', name, percValue, editingItem.id);
             } else {
-                await db.runAsync(
-                    'INSERT INTO ingredients (name, unit, stock_quantity, cost_per_unit) VALUES (?, ?, ?, ?)',
-                    name, unit, parseFloat(stock) || 0, parseFloat(cost) || 0
-                );
+                await db.runAsync('INSERT INTO discounts (name, percentage) VALUES (?, ?)', name, percValue);
             }
             closeModal();
-            loadIngredients();
+            loadDiscounts();
         } catch (error) {
-            console.error("Failed to save ingredient", error);
+            console.error("Failed to save discount", error);
         }
     };
 
     const handleDelete = (id) => {
         Alert.alert(
-            "Delete Ingredient",
-            "Are you sure you want to delete this ingredient? This will also delete it from the Cloud database.",
+            "Delete Discount",
+            "Are you sure you want to delete this discount?",
             [
                 { text: "Cancel", style: "cancel" },
                 { 
@@ -66,10 +60,10 @@ export default function IngredientsTab() {
                     onPress: async () => {
                         try {
                             const db = await getDBConnection();
-                            await db.runAsync('UPDATE ingredients SET deleted_at = CURRENT_TIMESTAMP, synced = 0 WHERE id = ?', id);
-                            loadIngredients();
+                            await db.runAsync('UPDATE discounts SET deleted_at = CURRENT_TIMESTAMP, synced = 0 WHERE id = ?', id);
+                            loadDiscounts();
                         } catch (error) {
-                            console.error("Failed to delete", error);
+                            console.error("Failed to delete discount", error);
                         }
                     }
                 }
@@ -81,15 +75,11 @@ export default function IngredientsTab() {
         if (item) {
             setEditingItem(item);
             setName(item.name);
-            setUnit(item.unit);
-            setStock(item.stock_quantity.toString());
-            setCost(item.cost_per_unit.toString());
+            setPercentage(item.percentage.toString());
         } else {
             setEditingItem(null);
             setName('');
-            setUnit('');
-            setStock('');
-            setCost('');
+            setPercentage('');
         }
         setModalVisible(true);
     };
@@ -102,34 +92,26 @@ export default function IngredientsTab() {
     return (
         <View style={styles.container}>
             <View style={styles.header}>
-                <Text style={styles.title}>Ingredients</Text>
+                <Text style={styles.title}>Discounts</Text>
                 <TouchableOpacity style={styles.addButton} onPress={() => openModal()}>
                     <Plus color="#1f2937" size={20} />
-                    <Text style={styles.addButtonText}>Add Ingredient</Text>
+                    <Text style={styles.addButtonText}>Add Discount</Text>
                 </TouchableOpacity>
             </View>
 
             <View style={styles.tableHeader}>
-                <Text style={[styles.tableCol, { flex: 2 }]}>Name</Text>
-                <Text style={styles.tableCol}>Unit</Text>
-                <Text style={styles.tableCol}>Stock</Text>
-                <Text style={styles.tableCol}>Cost/Unit</Text>
-                <Text style={styles.tableCol}>Renew Period</Text>
+                <Text style={[styles.tableCol, { flex: 2 }]}>Discount Name</Text>
+                <Text style={[styles.tableCol, { flex: 1 }]}>Percentage (%)</Text>
                 <Text style={[styles.tableCol, styles.actionsCol]}>Actions</Text>
             </View>
 
             <FlatList
-                data={ingredients}
+                data={discounts}
                 keyExtractor={item => item.id.toString()}
                 renderItem={({ item }) => (
                     <View style={styles.tableRow}>
                         <Text style={[styles.cellText, { flex: 2, fontWeight: 'bold' }]}>{item.name}</Text>
-                        <Text style={styles.cellText}>{item.unit}</Text>
-                        <Text style={styles.cellText}>{item.stock_quantity}</Text>
-                        <Text style={styles.cellText}>₱{item.cost_per_unit.toFixed(2)}</Text>
-                        <Text style={styles.cellText}>
-                            {item.reset_timer_days > 0 ? (item.reset_timer_days === 1 ? 'Daily' : (item.reset_timer_days === 7 ? 'Weekly' : `${item.reset_timer_days} Days`)) : 'None'}
-                        </Text>
+                        <Text style={[styles.cellText, { flex: 1 }]}>{item.percentage}%</Text>
                         <View style={[styles.tableCol, styles.actionsCol, { flexDirection: 'row', gap: 15 }]}>
                             <TouchableOpacity onPress={() => openModal(item)}>
                                 <Edit2 color="#6b7280" size={18} />
@@ -146,30 +128,24 @@ export default function IngredientsTab() {
                 <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
                         <View style={styles.modalHeader}>
-                            <Text style={styles.modalTitle}>{editingItem ? 'Edit Ingredient' : 'Add Ingredient'}</Text>
+                            <Text style={styles.modalTitle}>{editingItem ? 'Edit Discount' : 'Add Discount'}</Text>
                             <TouchableOpacity onPress={closeModal}>
                                 <X color="#6b7280" size={24} />
                             </TouchableOpacity>
                         </View>
 
-                        <Text style={styles.label}>Ingredient Name</Text>
-                        <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Enter ingredient name" />
+                        <Text style={styles.label}>Discount Name</Text>
+                        <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="e.g., PWD Discount" />
 
-                        <Text style={styles.label}>Unit (g, ml, pcs, etc.)</Text>
-                        <TextInput style={styles.input} value={unit} onChangeText={setUnit} placeholder="e.g. g" />
-
-                        <Text style={styles.label}>Stock Quantity</Text>
-                        <TextInput style={styles.input} value={stock} onChangeText={setStock} keyboardType="numeric" placeholder="0" />
-
-                        <Text style={styles.label}>Cost per Unit (₱)</Text>
-                        <TextInput style={styles.input} value={cost} onChangeText={setCost} keyboardType="numeric" placeholder="0" />
+                        <Text style={styles.label}>Percentage (%)</Text>
+                        <TextInput style={styles.input} value={percentage} onChangeText={setPercentage} keyboardType="numeric" placeholder="e.g., 5" />
 
                         <View style={styles.modalActions}>
                             <TouchableOpacity style={styles.cancelButton} onPress={closeModal}>
                                 <Text style={styles.cancelButtonText}>Cancel</Text>
                             </TouchableOpacity>
                             <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-                                <Text style={styles.saveButtonText}>{editingItem ? 'Update Ingredient' : 'Create Ingredient'}</Text>
+                                <Text style={styles.saveButtonText}>{editingItem ? 'Update Discount' : 'Create Discount'}</Text>
                             </TouchableOpacity>
                         </View>
                     </View>

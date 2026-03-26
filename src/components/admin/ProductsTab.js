@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, TextInput, Modal, Image, ScrollView, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, TextInput, Modal, Image, ScrollView, Alert, KeyboardAvoidingView, Platform } from 'react-native';
 import { getDBConnection } from '../../lib/database';
 import { deleteRecordFromSupabase } from '../../lib/syncService';
 import { supabase } from '../../lib/supabase';
@@ -71,9 +71,14 @@ export default function ProductsTab() {
             const catRes = await db.getAllAsync('SELECT * FROM categories WHERE deleted_at IS NULL');
             const ingRes = await db.getAllAsync('SELECT * FROM ingredients WHERE deleted_at IS NULL');
 
+            const formattedIngs = (ingRes || []).map(ing => ({
+                ...ing,
+                displayName: `${ing.name} (${ing.unit})`
+            }));
+
             setProducts(prodRes || []);
             setCategories(catRes || []);
-            setIngredientsList(ingRes || []);
+            setIngredientsList(formattedIngs);
         } catch (error) {
             console.error("Failed to load products data", error);
         }
@@ -191,12 +196,14 @@ export default function ProductsTab() {
                     throw new Error("Failed to disconnect old variants from orders: " + e.message);
                 }
 
+                // To maintain sync integrity, we must NOT hard-delete. 
+                // Instead, mark old variants/recipes as soft-deleted so sync service
+                // can push the deletions to Supabase before we insert the new ones.
                 try {
-                    // Delete and re-insert variants / recipes
-                    await db.runAsync('DELETE FROM product_variants WHERE product_id = ?', editingItem.id);
-                    await db.runAsync('DELETE FROM recipes WHERE product_id = ?', editingItem.id);
+                    await db.runAsync('UPDATE product_variants SET deleted_at = CURRENT_TIMESTAMP, synced = 0 WHERE product_id = ?', editingItem.id);
+                    await db.runAsync('UPDATE recipes SET deleted_at = CURRENT_TIMESTAMP, synced = 0 WHERE product_id = ?', editingItem.id);
                 } catch (e) {
-                    throw new Error("Failed to wipe old variants and recipes: " + e.message);
+                    throw new Error("Failed to flag old variants and recipes for sync deletion: " + e.message);
                 }
 
                 for (let v of variants) {
@@ -292,7 +299,11 @@ export default function ProductsTab() {
 
             // Always reload ingredients and categories fresh so newly-added ones are available
             const freshIngredients = await db.getAllAsync('SELECT * FROM ingredients WHERE deleted_at IS NULL ORDER BY name ASC');
-            setIngredientsList(freshIngredients || []);
+            const formattedFreshIngs = (freshIngredients || []).map(ing => ({
+                ...ing,
+                displayName: `${ing.name} (${ing.unit})`
+            }));
+            setIngredientsList(formattedFreshIngs);
 
             const freshCategories = await db.getAllAsync('SELECT * FROM categories WHERE deleted_at IS NULL');
             setCategories(freshCategories || []);
@@ -305,9 +316,9 @@ export default function ProductsTab() {
                 setImageUri(item.image_uri);
                 setStatus(item.status || 'Available');
 
-                const vars = await db.getAllAsync('SELECT * FROM product_variants WHERE product_id = ?', item.id);
-                const recs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id IS NULL', item.id);
-                const varRecs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id IS NOT NULL', item.id);
+                const vars = await db.getAllAsync('SELECT * FROM product_variants WHERE product_id = ? AND deleted_at IS NULL', item.id);
+                const recs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id IS NULL AND deleted_at IS NULL', item.id);
+                const varRecs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id IS NOT NULL AND deleted_at IS NULL', item.id);
 
                 const loadedVariants = (vars || []).map(v => {
                     const vr = (varRecs || []).find(r => r.variant_id === v.id);
@@ -390,7 +401,7 @@ export default function ProductsTab() {
             />
 
             <Modal visible={modalVisible} transparent animationType="slide">
-                <View style={styles.modalOverlay}>
+                <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
                         <View style={styles.modalHeader}>
                             <Text style={styles.modalTitle}>{editingItem ? 'Edit Product' : 'Add Product'}</Text>
@@ -437,10 +448,11 @@ export default function ProductsTab() {
                                         <View style={{ flex: 1, marginRight: 10 }}>
                                             <Text style={{ fontWeight: 'bold', fontSize: 15, color: '#374151', marginBottom: 5 }}>{v.name}</Text>
                                             <DropdownPicker
-                                                items={[{ id: null, name: "No Ingredient (Leave Empty)" }, ...ingredientsList]}
+                                                items={[{ id: null, displayName: "No Ingredient (Leave Empty)" }, ...ingredientsList]}
                                                 selectedId={v.ingredient_id}
                                                 onSelect={(id) => updateVariantIngredient(i, id)}
                                                 placeholder="Link Ingredient (Optional)"
+                                                displayKey="displayName"
                                             />
                                         </View>
                                         {v.ingredient_id && (
@@ -475,6 +487,7 @@ export default function ProductsTab() {
                                             selectedId={r.ingredient_id}
                                             onSelect={(id) => updateRecipeIngredient(i, id)}
                                             placeholder="Select Ingredient"
+                                            displayKey="displayName"
                                         />
                                     </View>
                                     <TextInput style={[styles.input, { flex: 1, marginHorizontal: 10, alignSelf: 'flex-start', marginTop: 5 }]} value={r.quantity.toString()} onChangeText={(val) => updateRecipeQuantity(i, val)} keyboardType="numeric" placeholder="Qty" />
@@ -495,7 +508,7 @@ export default function ProductsTab() {
                             </TouchableOpacity>
                         </View>
                     </View>
-                </View>
+                </KeyboardAvoidingView>
             </Modal>
         </View>
     );
