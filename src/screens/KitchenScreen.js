@@ -3,8 +3,10 @@ import { View, Text, StyleSheet, TouchableOpacity, FlatList, Modal, ScrollView, 
 import { getDBConnection } from '../lib/database';
 import { useFocusEffect } from '@react-navigation/native';
 import { History, X, CheckCircle } from 'lucide-react-native';
+import { useSyncContext } from '../context/SyncContext';
 
 export default function KitchenScreen() {
+    const { syncEpoch } = useSyncContext();
     const [orders, setOrders] = useState([]);
     const [currentTime, setCurrentTime] = useState(new Date());
     const [stockAlerts, setStockAlerts] = useState([]);
@@ -23,7 +25,7 @@ export default function KitchenScreen() {
             loadStockAlerts();
             const interval = setInterval(() => setCurrentTime(new Date()), 1000);
             return () => clearInterval(interval);
-        }, [])
+        }, [syncEpoch])
     );
 
     const loadPendingOrders = async () => {

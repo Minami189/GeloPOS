@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, TextInput, Modal, KeyboardAvoidingView, Platform, Alert } from 'react-native';
 import { getDBConnection } from '../../lib/database';
 import { Edit2, RefreshCw, X, AlertCircle } from 'lucide-react-native';
+import { useFocusEffect } from '@react-navigation/native';
+import { useSyncContext } from '../../context/SyncContext';
 
 const TIMER_OPTIONS = [
     { label: 'None', value: 0 },
@@ -11,15 +13,18 @@ const TIMER_OPTIONS = [
 ];
 
 export default function InventoryTab() {
+    const { syncEpoch } = useSyncContext();
     const [ingredients, setIngredients] = useState([]);
     const [modalVisible, setModalVisible] = useState(false);
     const [editingItem, setEditingItem] = useState(null);
     const [stock, setStock] = useState('');
     const [timerOption, setTimerOption] = useState(0);
 
-    useEffect(() => {
-        loadIngredients();
-    }, []);
+    useFocusEffect(
+        useCallback(() => {
+            loadIngredients();
+        }, [syncEpoch])
+    );
 
     const loadIngredients = async () => {
         try {

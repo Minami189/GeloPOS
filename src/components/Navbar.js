@@ -3,6 +3,7 @@ import { View, StyleSheet, TouchableOpacity, Text, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { LayoutGrid, ShoppingCart, ChefHat, BarChart2, LogOut, Settings, Shield, Briefcase, UserCheck, Archive } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
+import { showConfirm } from '../lib/alerts';
 
 const ROLE_ICONS = {
     admin: Shield,
@@ -19,13 +20,11 @@ export default function Navbar() {
     const roleColor = currentUser?.role === 'admin' ? '#f59e0b' : currentUser?.role === 'cashier' ? '#3b82f6' : '#10b981';
 
     const handleLogout = () => {
-        Alert.alert(
+        showConfirm(
             'Sign Out',
             `Sign out of ${currentUser?.username}?`,
-            [
-                { text: 'Cancel', style: 'cancel' },
-                { text: 'Sign Out', style: 'destructive', onPress: logout }
-            ]
+            logout,
+            'Sign Out'
         );
     };
 

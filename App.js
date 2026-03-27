@@ -1,10 +1,26 @@
 import 'react-native-url-polyfill/auto';
 import React, { useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, View, ActivityIndicator } from 'react-native';
+import { StyleSheet, View, ActivityIndicator, Platform, Alert } from 'react-native';
 import AppNavigator from './src/navigation/AppNavigator';
 import { initDB } from './src/lib/database';
+
+// Global Web Fallback for React Native Alerts
+if (Platform.OS === 'web') {
+  Alert.alert = (title, message, buttons) => {
+    if (!buttons || buttons.length === 0 || (buttons.length === 1 && !buttons[0].onPress)) {
+      window.alert(`${title}\n\n${message}`);
+    } else {
+      const confirmBtn = buttons.find(b => b.style === 'destructive' || b.text !== 'Cancel') || buttons[buttons.length - 1];
+      const result = window.confirm(`${title}\n\n${message}`);
+      if (result && confirmBtn && confirmBtn.onPress) {
+        confirmBtn.onPress();
+      }
+    }
+  };
+}
 import { AuthProvider } from './src/context/AuthContext';
+import { SyncProvider } from './src/context/SyncContext';
 
 export default function App() {
   const [dbReady, setDbReady] = React.useState(false);
@@ -26,12 +42,14 @@ export default function App() {
   }
 
   return (
-    <AuthProvider>
-      <View style={styles.container}>
-        <AppNavigator />
-        <StatusBar style="light" />
-      </View>
-    </AuthProvider>
+    <SyncProvider>
+      <AuthProvider>
+        <View style={styles.container}>
+          <AppNavigator />
+          <StatusBar style="light" />
+        </View>
+      </AuthProvider>
+    </SyncProvider>
   );
 }
 

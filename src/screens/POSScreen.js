@@ -3,8 +3,10 @@ import { View, Text, StyleSheet, TouchableOpacity, FlatList, Image, Modal, TextI
 import { getDBConnection, getDeviceId } from '../lib/database';
 import { useFocusEffect } from '@react-navigation/native';
 import { ShoppingCart, Plus, Minus, Trash2, X, CheckCircle, Search } from 'lucide-react-native';
+import { useSyncContext } from '../context/SyncContext';
 
 export default function POSScreen() {
+    const { syncEpoch } = useSyncContext();
     const [products, setProducts] = useState([]);
     const [categories, setCategories] = useState([]);
     const [cart, setCart] = useState([]);
@@ -35,13 +37,13 @@ export default function POSScreen() {
             loadProducts();
             loadCategories();
             loadDiscounts();
-        }, [])
+        }, [syncEpoch])
     );
 
     const loadProducts = async () => {
         try {
             const db = await getDBConnection();
-            const res = await db.getAllAsync('SELECT * FROM products WHERE status = "Available" AND deleted_at IS NULL');
+            const res = await db.getAllAsync("SELECT * FROM products WHERE (status = 'Available' OR status IS NULL OR status = '') AND deleted_at IS NULL");
             setProducts(res || []);
         } catch (e) { console.error("Failed to load POS products", e); }
     };

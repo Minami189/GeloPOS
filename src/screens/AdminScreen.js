@@ -7,11 +7,13 @@ import CategoriesTab from '../components/admin/CategoriesTab';
 import TransactionsTab from '../components/admin/TransactionsTab';
 import DiscountsTab from '../components/admin/DiscountsTab';
 import { syncAllToSupabase } from '../lib/syncService';
+import { useSyncContext } from '../context/SyncContext';
 
 export default function AdminScreen() {
     const [activeTab, setActiveTab] = useState('Products');
     const [isSyncing, setIsSyncing] = useState(false);
     const [syncTrigger, setSyncTrigger] = useState(0);
+    const { notifySynced } = useSyncContext();
 
     const handleSync = async () => {
         setIsSyncing(true);
@@ -20,6 +22,7 @@ export default function AdminScreen() {
 
         if (result.success) {
             setSyncTrigger(prev => prev + 1);
+            notifySynced();
             Alert.alert("Sync Success", result.message);
         } else {
             Alert.alert("Sync Failed", result.error || "Unknown error occurred.");
