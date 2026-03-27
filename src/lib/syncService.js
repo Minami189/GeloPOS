@@ -174,16 +174,35 @@ export const syncCatalogToSupabase = async () => {
                     const { synced, deleted_at, ...rest } = item;
 
                     // Handle Image Upload for Products
-                    if (tableDef.local === 'products' && rest.image_uri && rest.image_uri.startsWith('file://')) {
-                        try {
-                            const fileName = rest.image_uri.split('/').pop();
-                            const fileExt = fileName.split('.').pop() || 'jpg';
-                            const mimeType = fileExt.toLowerCase() === 'png' ? 'image/png' : 'image/jpeg';
+                    const isLocalUri = rest.image_uri && (
+                        rest.image_uri.startsWith('file://') || 
+                        rest.image_uri.startsWith('blob:') || 
+                        rest.image_uri.startsWith('data:')
+                    );
 
-                            const base64File = await FileSystem.readAsStringAsync(rest.image_uri, {
-                                encoding: FileSystem.EncodingType.Base64,
-                            });
-                            const arrayBuffer = decode(base64File);
+                    if (tableDef.local === 'products' && isLocalUri) {
+                        try {
+                            let arrayBuffer;
+                            let fileName = `image_${Date.now()}`;
+                            let fileExt = 'jpg';
+
+                            if (rest.image_uri.startsWith('file://')) {
+                                fileName = rest.image_uri.split('/').pop();
+                                fileExt = fileName.split('.').pop() || 'jpg';
+                                const base64File = await FileSystem.readAsStringAsync(rest.image_uri, {
+                                    encoding: FileSystem.EncodingType.Base64,
+                                });
+                                arrayBuffer = decode(base64File);
+                            } else {
+                                // Web branch: handle blob: or data:
+                                const response = await fetch(rest.image_uri);
+                                arrayBuffer = await response.arrayBuffer();
+                                if (rest.image_uri.startsWith('data:')) {
+                                    fileExt = rest.image_uri.split(';')[0].split('/')[1] || 'jpg';
+                                }
+                            }
+
+                            const mimeType = fileExt.toLowerCase() === 'png' ? 'image/png' : 'image/jpeg';
                             const bucketPath = `products/${Date.now()}_${fileName}`;
 
                             const { data: uploadData, error: uploadError } = await supabase.storage

@@ -25,7 +25,16 @@
       "edgeToEdgeEnabled": true
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "backgroundColor": "#0d1117",
+      "themeColor": "#3b82f6",
+      "description": "GeloPOS - A powerful tablet POS system.",
+      "shortName": "GeloPOS",
+      "name": "GeloPOS Tablet",
+      "display": "standalone",
+      "lang": "en",
+      "orientation": "landscape"
     },
     "plugins": [
       "expo-sqlite"
