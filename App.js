@@ -25,6 +25,16 @@ import { SyncProvider } from './src/context/SyncContext';
 export default function App() {
   const [dbReady, setDbReady] = React.useState(false);
 
+  // Secondary PWA Guard
+  const isStandalone = 
+    window.matchMedia('(display-mode: standalone)').matches || 
+    window.navigator.standalone ||
+    (Platform.OS === 'web' && navigator.userAgent.includes('Electron'));
+
+  if (Platform.OS === 'web' && !isStandalone) {
+    return null; // The index.html gatekeeper handles the UI for this
+  }
+
   useEffect(() => {
     const setup = async () => {
       await initDB();

@@ -1,13 +1,37 @@
 {
   "name": "gelopos",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "electron-main.js",
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "build:web": "expo export --platform web"
+    "build:web": "expo export --platform web && node electron-postbuild.js",
+    "electron:start": "electron electron-main.js",
+    "electron:build": "electron-builder build --win --publish never"
+  },
+  "build": {
+    "appId": "com.soon.gelopos",
+    "productName": "GeloPOS",
+    "directories": {
+      "output": "dist-installer"
+    },
+    "files": [
+      "dist/**/*",
+      "electron-main.js",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": true,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "GeloPOS"
+    }
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
@@ -30,5 +54,9 @@
     "react-native-url-polyfill": "^3.0.0",
     "react-native-web": "^0.21.0"
   },
-  "private": true
+  "private": true,
+  "devDependencies": {
+    "electron": "^41.1.0",
+    "electron-builder": "^24.13.3"
+  }
 }
