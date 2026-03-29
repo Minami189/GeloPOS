@@ -30,6 +30,8 @@ export const initDB = async () => {
                 unit TEXT NOT NULL,
                 stock_quantity REAL NOT NULL DEFAULT 0,
                 cost_per_unit REAL NOT NULL DEFAULT 0,
+                reset_timer_days INTEGER DEFAULT 0,
+                last_reset_at TEXT DEFAULT NULL,
                 synced INTEGER DEFAULT 0,
                 deleted_at TEXT DEFAULT NULL
             );
@@ -79,7 +81,11 @@ export const initDB = async () => {
                 device_id TEXT,
                 is_local INTEGER DEFAULT 1,
                 customer_name TEXT,
-                daily_order_number INTEGER
+                daily_order_number INTEGER,
+                discount_id INTEGER,
+                discount_name TEXT,
+                discount_amount REAL DEFAULT 0,
+                order_type TEXT DEFAULT 'Dine In'
             );
 
             CREATE TABLE IF NOT EXISTS order_items (
@@ -99,6 +105,14 @@ export const initDB = async () => {
                 value TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS discounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                percentage REAL NOT NULL,
+                synced INTEGER DEFAULT 0,
+                deleted_at TEXT DEFAULT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT NOT NULL UNIQUE,
@@ -109,13 +123,14 @@ export const initDB = async () => {
                 can_access_admin INTEGER DEFAULT 0,
                 can_access_analytics INTEGER DEFAULT 0,
                 can_access_settings INTEGER DEFAULT 0,
+                can_access_inventory INTEGER DEFAULT 0,
                 avatar_emoji TEXT DEFAULT '👤',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         `);
 
         // --- Migration: Add 'synced' column to existing tables if missing ---
-        const tablesToUpdate = ['categories', 'ingredients', 'products', 'product_variants', 'recipes'];
+        const tablesToUpdate = ['categories', 'ingredients', 'products', 'product_variants', 'recipes', 'discounts'];
 
         for (const table of tablesToUpdate) {
             try {
@@ -143,6 +158,24 @@ export const initDB = async () => {
             console.error('Migration error for orders customer_name:', err);
         }
 
+        // --- Migration: Add 'reset_timer_days' and 'last_reset_at' columns to ingredients ---
+        try {
+            const ingInfo = await db.getAllAsync(`PRAGMA table_info(ingredients)`);
+            const hasResetTimer = ingInfo.some(col => col.name === 'reset_timer_days');
+            const hasLastReset = ingInfo.some(col => col.name === 'last_reset_at');
+            
+            if (!hasResetTimer) {
+                await db.execAsync(`ALTER TABLE ingredients ADD COLUMN reset_timer_days INTEGER DEFAULT 0;`);
+                console.log("Added 'reset_timer_days' column to ingredients table");
+            }
+            if (!hasLastReset) {
+                await db.execAsync(`ALTER TABLE ingredients ADD COLUMN last_reset_at TEXT DEFAULT NULL;`);
+                console.log("Added 'last_reset_at' column to ingredients table");
+            }
+        } catch (err) {
+            console.error('Migration error for ingredients timer columns:', err);
+        }
+
         // --- Migration: Add 'device_id' and 'is_local' columns to orders if missing ---
         try {
             const ordersInfo = await db.getAllAsync(`PRAGMA table_info(orders)`);
@@ -163,8 +196,18 @@ export const initDB = async () => {
                 await db.execAsync(`ALTER TABLE orders ADD COLUMN daily_order_number INTEGER;`);
                 console.log("Added 'daily_order_number' column to orders table");
             }
+
+            const hasDiscountId = ordersInfo.some(col => col.name === 'discount_id');
+            if (!hasDiscountId) {
+                await db.execAsync(`
+                    ALTER TABLE orders ADD COLUMN discount_id INTEGER;
+                    ALTER TABLE orders ADD COLUMN discount_name TEXT;
+                    ALTER TABLE orders ADD COLUMN discount_amount REAL DEFAULT 0;
+                `);
+                console.log("Added discount columns to orders table");
+            }
         } catch (err) {
-            console.error('Migration error for orders device_id/is_local/daily_num:', err);
+            console.error('Migration error for orders device_id/is_local/daily_num/discounts:', err);
         }
 
         // --- Migration: Ensure 'settings' table exists for existing users ---
@@ -205,6 +248,18 @@ export const initDB = async () => {
             console.error('Migration error for orders deleted_at:', err);
         }
 
+        // --- Migration: Add 'order_type' column to orders if missing ---
+        try {
+            const ordersInfo = await db.getAllAsync(`PRAGMA table_info(orders)`);
+            const hasOrderType = ordersInfo.some(col => col.name === 'order_type');
+            if (!hasOrderType) {
+                await db.execAsync(`ALTER TABLE orders ADD COLUMN order_type TEXT DEFAULT 'Dine In';`);
+                console.log("Added 'order_type' column to orders table");
+            }
+        } catch (err) {
+            console.error('Migration error for orders order_type:', err);
+        }
+
         // --- Migration: Case-insensitive unique index for ingredient names ---
         // SQLite UNIQUE constraints are case-sensitive by default. This index
         // prevents "Sugar" and "sugar" from coexisting as separate ingredients.
@@ -237,10 +292,10 @@ export const initDB = async () => {
             const userCount = await db.getFirstAsync('SELECT COUNT(*) as cnt FROM users');
             if (!userCount || userCount.cnt === 0) {
                 await db.execAsync(`
-                    INSERT INTO users (username, pin, role, can_access_pos, can_access_kitchen, can_access_admin, can_access_analytics, can_access_settings, avatar_emoji)
-                    VALUES ('Admin', '1234', 'admin', 1, 1, 1, 1, 1, '👑');
-                    INSERT INTO users (username, pin, role, can_access_pos, can_access_kitchen, can_access_admin, can_access_analytics, can_access_settings, avatar_emoji)
-                    VALUES ('Cashier', '5678', 'cashier', 1, 1, 0, 1, 0, '🧑‍💼');
+                    INSERT INTO users (username, pin, role, can_access_pos, can_access_kitchen, can_access_admin, can_access_analytics, can_access_settings, can_access_inventory, avatar_emoji)
+                    VALUES ('Admin', '1234', 'admin', 1, 1, 1, 1, 1, 1, '👑');
+                    INSERT INTO users (username, pin, role, can_access_pos, can_access_kitchen, can_access_admin, can_access_analytics, can_access_settings, can_access_inventory, avatar_emoji)
+                    VALUES ('Cashier', '5678', 'cashier', 1, 1, 0, 1, 0, 0, '🧑‍💼');
                 `);
                 console.log('Seeded default Admin and Cashier users.');
             }
@@ -261,6 +316,7 @@ export const initDB = async () => {
                     can_access_admin INTEGER DEFAULT 0,
                     can_access_analytics INTEGER DEFAULT 0,
                     can_access_settings INTEGER DEFAULT 0,
+                    can_access_inventory INTEGER DEFAULT 0,
                     avatar_emoji TEXT DEFAULT '👤',
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 );
@@ -272,6 +328,11 @@ export const initDB = async () => {
                 await db.execAsync(`UPDATE users SET can_access_settings = 1 WHERE role = 'admin';`);
             } catch (err) {
                 // column exists
+            }
+            try {
+                await db.execAsync(`ALTER TABLE users ADD COLUMN can_access_inventory INTEGER DEFAULT 0;`);
+                await db.execAsync(`UPDATE users SET can_access_inventory = 1 WHERE role = 'admin';`);
+            } catch (err) {
             }
         } catch (err) {
             console.error('Migration error for users table:', err);

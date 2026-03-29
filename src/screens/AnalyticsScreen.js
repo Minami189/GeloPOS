@@ -1,11 +1,15 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { BarChart2, Sparkles } from 'lucide-react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { BarChart2, Sparkles, ClipboardList, History } from 'lucide-react-native';
 import SalesTab from '../components/analytics/SalesTab';
+import ItemsSoldTab from '../components/analytics/ItemsSoldTab';
+import TodayTransactionsTab from '../components/analytics/TodayTransactionsTab';
 import AITab from '../components/analytics/AITab';
 
 const TABS = [
-    { id: 'sales', label: 'Sales Analytics', icon: BarChart2 },
+    { id: 'sales', label: 'Sales (Today)', icon: BarChart2 },
+    { id: 'itemsSold', label: 'Items Sold', icon: ClipboardList },
+    { id: 'transactions', label: 'Today\'s Transactions', icon: History },
     { id: 'ai', label: 'AI Recommendations', icon: Sparkles },
 ];
 
@@ -19,7 +23,8 @@ export default function AnalyticsScreen() {
             </View>
 
             <View style={styles.tabBar}>
-                {TABS.map(tab => {
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ flexGrow: 1, gap: 4 }}>
+                    {TABS.map(tab => {
                     const Icon = tab.icon;
                     const isActive = activeTab === tab.id;
                     return (
@@ -34,11 +39,14 @@ export default function AnalyticsScreen() {
                             </Text>
                         </TouchableOpacity>
                     );
-                })}
+                    })}
+                </ScrollView>
             </View>
 
             <View style={styles.content}>
                 {activeTab === 'sales' && <SalesTab />}
+                {activeTab === 'itemsSold' && <ItemsSoldTab />}
+                {activeTab === 'transactions' && <TodayTransactionsTab />}
                 {activeTab === 'ai' && <AITab />}
             </View>
         </View>

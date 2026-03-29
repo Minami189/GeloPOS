@@ -41,7 +41,11 @@ export const syncOrdersToSupabase = async () => {
                 created_at: order.created_at,
                 device_id: order.device_id,
                 customer_name: order.customer_name,
-                daily_order_number: order.daily_order_number
+                daily_order_number: order.daily_order_number,
+                discount_id: order.discount_id,
+                discount_name: order.discount_name,
+                discount_amount: order.discount_amount,
+                order_type: order.order_type
             };
 
             if (existingOrder) {
@@ -76,6 +80,14 @@ export const syncOrdersToSupabase = async () => {
             }));
 
             if (itemsToInsert.length > 0) {
+                // Delete existing items for this supabase order before reinserting
+                // to avoid duplicates when the order is synced again (e.g. status update)
+                const { error: delItemsError } = await supabase
+                    .from('pos_order_items')
+                    .delete()
+                    .eq('supabase_order_id', orderData.id);
+                if (delItemsError) console.warn('Could not delete old items before reinserting:', delItemsError.message);
+
                 const { error: itemsError } = await supabase.from('pos_order_items').insert(itemsToInsert);
                 if (itemsError) throw itemsError;
             }
@@ -110,7 +122,8 @@ export const syncCatalogToSupabase = async () => {
             { local: 'ingredients', supabase: 'pos_ingredients' },
             { local: 'products', supabase: 'pos_products' },
             { local: 'product_variants', supabase: 'pos_product_variants' },
-            { local: 'recipes', supabase: 'pos_recipes' }
+            { local: 'recipes', supabase: 'pos_recipes' },
+            { local: 'discounts', supabase: 'pos_discounts' }
         ];
 
         for (const tableDef of tablesToSync) {
@@ -161,16 +174,35 @@ export const syncCatalogToSupabase = async () => {
                     const { synced, deleted_at, ...rest } = item;
 
                     // Handle Image Upload for Products
-                    if (tableDef.local === 'products' && rest.image_uri && rest.image_uri.startsWith('file://')) {
-                        try {
-                            const fileName = rest.image_uri.split('/').pop();
-                            const fileExt = fileName.split('.').pop() || 'jpg';
-                            const mimeType = fileExt.toLowerCase() === 'png' ? 'image/png' : 'image/jpeg';
+                    const isLocalUri = rest.image_uri && (
+                        rest.image_uri.startsWith('file://') || 
+                        rest.image_uri.startsWith('blob:') || 
+                        rest.image_uri.startsWith('data:')
+                    );
 
-                            const base64File = await FileSystem.readAsStringAsync(rest.image_uri, {
-                                encoding: FileSystem.EncodingType.Base64,
-                            });
-                            const arrayBuffer = decode(base64File);
+                    if (tableDef.local === 'products' && isLocalUri) {
+                        try {
+                            let arrayBuffer;
+                            let fileName = `image_${Date.now()}`;
+                            let fileExt = 'jpg';
+
+                            if (rest.image_uri.startsWith('file://')) {
+                                fileName = rest.image_uri.split('/').pop();
+                                fileExt = fileName.split('.').pop() || 'jpg';
+                                const base64File = await FileSystem.readAsStringAsync(rest.image_uri, {
+                                    encoding: FileSystem.EncodingType.Base64,
+                                });
+                                arrayBuffer = decode(base64File);
+                            } else {
+                                // Web branch: handle blob: or data:
+                                const response = await fetch(rest.image_uri);
+                                arrayBuffer = await response.arrayBuffer();
+                                if (rest.image_uri.startsWith('data:')) {
+                                    fileExt = rest.image_uri.split(';')[0].split('/')[1] || 'jpg';
+                                }
+                            }
+
+                            const mimeType = fileExt.toLowerCase() === 'png' ? 'image/png' : 'image/jpeg';
                             const bucketPath = `products/${Date.now()}_${fileName}`;
 
                             const { data: uploadData, error: uploadError } = await supabase.storage
@@ -319,6 +351,7 @@ const _fetchCatalogRecords = async (db) => {
         { local: 'products', supabase: 'pos_products' },
         { local: 'product_variants', supabase: 'pos_product_variants' },
         { local: 'recipes', supabase: 'pos_recipes' },
+        { local: 'discounts', supabase: 'pos_discounts' },
     ];
 
     const cloudData = {};
@@ -355,12 +388,11 @@ const _fetchCatalogRecords = async (db) => {
         });
     }
 
-    // order_items has FK references to products and product_variants WITHOUT ON DELETE CASCADE.
-    // If we try to DELETE FROM products/product_variants while order_items still references
-    // them, SQLite will throw a FK violation. Null out those references first so the
-    // catalog delete can proceed cleanly. Orders/order_items are re-inserted by
-    // fetchOrdersFromSupabase, so this is safe.
-    await db.runAsync('UPDATE order_items SET product_id = NULL, variant_id = NULL WHERE product_id IS NOT NULL OR variant_id IS NOT NULL');
+    // order_items has FK references to products and product_variants.
+    // With PRAGMA foreign_keys = OFF (set by the caller for fetchOrdersFromSupabase),
+    // we can safely delete catalog tables without nulling order_items first.
+    // We skip the NULL-out step here to avoid permanently breaking product references
+    // if this function is ever called while order_items still exist.
 
     // Delete in reverse order (children first) so remaining FK constraints are respected
     for (let i = tables.length - 1; i >= 0; i--) {
@@ -465,18 +497,35 @@ export const fetchOrdersFromSupabase = async () => {
                     const deviceId = order.device_id || 'UNKNOWN';
                     const isLocal = deviceId === localDevId ? 1 : 0;
                     const dailyNum = order.daily_order_number || 0;
+                    const discId = order.discount_id || null;
+                    const discName = order.discount_name || null;
+                    const discAmt = parseFloat(order.discount_amount || 0);
 
                     await db.runAsync(
-                        `INSERT OR REPLACE INTO orders (id, total_amount, cash_received, change_amount, status, created_at, customer_name, device_id, is_local, daily_order_number, synced)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-                        sId, totalAmount, cashRecv, changeAmt, status, createdAt, custName, deviceId, isLocal, dailyNum
+                        `INSERT OR REPLACE INTO orders (id, total_amount, cash_received, change_amount, status, created_at, customer_name, device_id, is_local, daily_order_number, discount_id, discount_name, discount_amount, order_type, synced)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+                        sId, totalAmount, cashRecv, changeAmt, status, createdAt, custName, deviceId, isLocal, dailyNum, discId, discName, discAmt, order.order_type || 'Dine In'
                     );
+                }
+
+                // Build a map: supabase_order_id -> locally assigned order id (local_id)
+                // so items without local_order_id can still be matched correctly
+                const supabaseToLocalId = {};
+                for (const order of uniqueOrders) {
+                    const localId = parseInt(order.local_id, 10) || parseInt(order.id, 10);
+                    const supabaseId = parseInt(order.id, 10);
+                    if (supabaseId) supabaseToLocalId[supabaseId] = localId;
                 }
 
                 // Re-insert order items
                 for (const item of uniqueItems) {
                     const itemId = parseInt(item.id, 10);
-                    const orderId = parseInt(item.local_order_id, 10) || parseInt(item.supabase_order_id, 10);
+                    // Prefer local_order_id; fall back to supabase→local map
+                    const localOrderId = parseInt(item.local_order_id, 10);
+                    const supabaseOrderId = parseInt(item.supabase_order_id, 10);
+                    const orderId = (localOrderId && !isNaN(localOrderId))
+                        ? localOrderId
+                        : (supabaseToLocalId[supabaseOrderId] || supabaseOrderId);
                     const productId = item.product_id ? parseInt(item.product_id, 10) : null;
                     const variantId = item.variant_id ? parseInt(item.variant_id, 10) : null;
                     const quantity = parseInt(item.quantity || 1, 10);

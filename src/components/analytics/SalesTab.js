@@ -4,6 +4,7 @@ import {
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { getDBConnection } from '../../lib/database';
+import { useAuth } from '../../context/AuthContext';
 import { BarChart } from 'react-native-chart-kit';
 import { Eye } from 'lucide-react-native';
 
@@ -13,7 +14,6 @@ export default function SalesTab() {
     const [salesSummary, setSalesSummary] = useState({ totalRevenue: 0, totalOrders: 0, avgOrderValue: 0 });
     const [chartData, setChartData] = useState({ labels: [], data: [] });
     const [topProducts, setTopProducts] = useState([]);
-    const [filterPeriod, setFilterPeriod] = useState('All Time');
     const [showDeleted, setShowDeleted] = useState(false);
     const [hasDeletedSales, setHasDeletedSales] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
@@ -21,19 +21,14 @@ export default function SalesTab() {
     useFocusEffect(
         useCallback(() => {
             loadAnalytics();
-        }, [filterPeriod, showDeleted])
+        }, [showDeleted])
     );
 
     const loadAnalytics = async () => {
         setIsLoading(true);
         try {
             const db = await getDBConnection();
-            let dateCondition = '';
-            if (filterPeriod === 'Today') {
-                dateCondition = "AND DATE(o.created_at) = DATE('now', 'localtime')";
-            } else if (filterPeriod === 'This Month') {
-                dateCondition = "AND strftime('%Y-%m', o.created_at) = strftime('%Y-%m', 'now', 'localtime')";
-            }
+            const dateCondition = "AND DATE(o.created_at) = DATE('now', 'localtime')";
 
             // Check if deleted product sales exist
             const deletedCheck = await db.getFirstAsync(`
@@ -101,36 +96,10 @@ export default function SalesTab() {
 
     return (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
-            {/* Period filter */}
-            <View style={s.filterRow}>
-                {['All Time', 'Today', 'This Month'].map(p => (
-                    <TouchableOpacity
-                        key={p}
-                        style={[s.filterBtn, filterPeriod === p && s.filterBtnActive]}
-                        onPress={() => setFilterPeriod(p)}
-                    >
-                        <Text style={[s.filterText, filterPeriod === p && s.filterTextActive]}>{p}</Text>
-                    </TouchableOpacity>
-                ))}
-
-                {/* Deleted products toggle — only shown if deleted sales exist */}
-                {hasDeletedSales && (
-                    <View style={s.toggleWrap}>
-                        <Eye color={showDeleted ? '#6366f1' : '#9ca3af'} size={16} />
-                        <Text style={[s.toggleLabel, showDeleted && { color: '#6366f1' }]}>
-                            Show Deleted Products
-                        </Text>
-                        <Switch
-                            value={showDeleted}
-                            onValueChange={setShowDeleted}
-                            trackColor={{ false: '#e5e7eb', true: '#c7d2fe' }}
-                            thumbColor={showDeleted ? '#6366f1' : '#9ca3af'}
-                        />
-                    </View>
-                )}
-            </View>
-
             {/* Summary cards */}
+            <View style={s.titleContainer}>
+                <Text style={s.chartTitle}>Sales Today</Text>
+            </View>
             <View style={s.summaryRow}>
                 <View style={s.card}>
                     <Text style={s.cardLabel}>Total Revenue</Text>

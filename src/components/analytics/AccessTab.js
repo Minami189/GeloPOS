@@ -16,6 +16,7 @@ const PAGE_PERMISSIONS = [
     { key: 'can_access_admin', label: 'Admin Panel', color: '#ef4444' },
     { key: 'can_access_analytics', label: 'Analytics', color: '#8b5cf6' },
     { key: 'can_access_settings', label: 'Settings & Access', color: '#10b981' },
+    { key: 'can_access_inventory', label: 'Inventory', color: '#f97316' },
 ];
 
 const ROLE_OPTIONS = ['cashier', 'staff', 'admin'];
@@ -93,6 +94,7 @@ function UserCard({ user, onDelete, onUpdatePermissions, onUpdatePin, isCurrentU
         can_access_admin: !!user.can_access_admin,
         can_access_analytics: !!user.can_access_analytics,
         can_access_settings: !!user.can_access_settings,
+        can_access_inventory: !!user.can_access_inventory,
     });
     const [avatar, setAvatar] = useState(user.avatar_emoji || '👤');
     const [newPin, setNewPin] = useState('');
@@ -216,6 +218,7 @@ function AddUserModal({ onAdd, onClose }) {
         can_access_admin: false,
         can_access_analytics: false,
         can_access_settings: false,
+        can_access_inventory: false,
     });
     const [loading, setLoading] = useState(false);
 
@@ -358,13 +361,13 @@ export default function AccessTab() {
         const db = await getDBConnection();
         if (newPin) {
             await db.runAsync(
-                `UPDATE users SET can_access_pos=?, can_access_kitchen=?, can_access_admin=?, can_access_analytics=?, can_access_settings=?, pin=?, avatar_emoji=? WHERE id=?`,
-                [perms.can_access_pos ? 1 : 0, perms.can_access_kitchen ? 1 : 0, perms.can_access_admin ? 1 : 0, perms.can_access_analytics ? 1 : 0, perms.can_access_settings ? 1 : 0, newPin, avatar, userId]
+                `UPDATE users SET can_access_pos=?, can_access_kitchen=?, can_access_admin=?, can_access_analytics=?, can_access_settings=?, can_access_inventory=?, pin=?, avatar_emoji=? WHERE id=?`,
+                [perms.can_access_pos ? 1 : 0, perms.can_access_kitchen ? 1 : 0, perms.can_access_admin ? 1 : 0, perms.can_access_analytics ? 1 : 0, perms.can_access_settings ? 1 : 0, perms.can_access_inventory ? 1 : 0, newPin, avatar, userId]
             );
         } else {
             await db.runAsync(
-                `UPDATE users SET can_access_pos=?, can_access_kitchen=?, can_access_admin=?, can_access_analytics=?, can_access_settings=?, avatar_emoji=? WHERE id=?`,
-                [perms.can_access_pos ? 1 : 0, perms.can_access_kitchen ? 1 : 0, perms.can_access_admin ? 1 : 0, perms.can_access_analytics ? 1 : 0, perms.can_access_settings ? 1 : 0, avatar, userId]
+                `UPDATE users SET can_access_pos=?, can_access_kitchen=?, can_access_admin=?, can_access_analytics=?, can_access_settings=?, can_access_inventory=?, avatar_emoji=? WHERE id=?`,
+                [perms.can_access_pos ? 1 : 0, perms.can_access_kitchen ? 1 : 0, perms.can_access_admin ? 1 : 0, perms.can_access_analytics ? 1 : 0, perms.can_access_settings ? 1 : 0, perms.can_access_inventory ? 1 : 0, avatar, userId]
             );
         }
         Alert.alert('Saved', 'User profile updated.');
@@ -375,16 +378,17 @@ export default function AccessTab() {
     const handleAddUser = async ({ username, pin, role, avatar, perms }) => {
         try {
             const db = await getDBConnection();
-            const adminPerms = role === 'admin' ? [1, 1, 1, 1, 1] : [
+            const adminPerms = role === 'admin' ? [1, 1, 1, 1, 1, 1] : [
                 perms.can_access_pos ? 1 : 0,
                 perms.can_access_kitchen ? 1 : 0,
                 perms.can_access_admin ? 1 : 0,
                 perms.can_access_analytics ? 1 : 0,
                 perms.can_access_settings ? 1 : 0,
+                perms.can_access_inventory ? 1 : 0,
             ];
             await db.runAsync(
-                `INSERT INTO users (username, pin, role, can_access_pos, can_access_kitchen, can_access_admin, can_access_analytics, can_access_settings, avatar_emoji)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                `INSERT INTO users (username, pin, role, can_access_pos, can_access_kitchen, can_access_admin, can_access_analytics, can_access_settings, can_access_inventory, avatar_emoji)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [username, pin, role, ...adminPerms, avatar]
             );
             Alert.alert('Success', `${username} has been added.`);

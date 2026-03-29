@@ -1,13 +1,17 @@
 import React, { useState, useCallback, useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, Image, Modal, TextInput, Alert, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, Image, Modal, TextInput, Alert, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { getDBConnection, getDeviceId } from '../lib/database';
 import { useFocusEffect } from '@react-navigation/native';
 import { ShoppingCart, Plus, Minus, Trash2, X, CheckCircle, Search } from 'lucide-react-native';
+import { useSyncContext } from '../context/SyncContext';
 
 export default function POSScreen() {
+    const { syncEpoch } = useSyncContext();
     const [products, setProducts] = useState([]);
     const [categories, setCategories] = useState([]);
     const [cart, setCart] = useState([]);
+    const [discounts, setDiscounts] = useState([]);
+    const [selectedDiscountId, setSelectedDiscountId] = useState(null);
 
     const [selectedCategory, setSelectedCategory] = useState(null); // null = "All"
     const [searchQuery, setSearchQuery] = useState('');
@@ -19,8 +23,10 @@ export default function POSScreen() {
     const [paymentModalVisible, setPaymentModalVisible] = useState(false);
     const [cashReceived, setCashReceived] = useState('');
     const [customerName, setCustomerName] = useState('');
+    const [orderType, setOrderType] = useState('Dine In');
     const [orderComplete, setOrderComplete] = useState(false);
-    const [lastOrderId, setLastOrderId] = useState(null);
+    const [lastOrderDisplay, setLastOrderDisplay] = useState(null);
+    const [finalChange, setFinalChange] = useState(0);
 
     // Low-stock warning state
     const [stockWarningVisible, setStockWarningVisible] = useState(false);
@@ -30,13 +36,14 @@ export default function POSScreen() {
         useCallback(() => {
             loadProducts();
             loadCategories();
-        }, [])
+            loadDiscounts();
+        }, [syncEpoch])
     );
 
     const loadProducts = async () => {
         try {
             const db = await getDBConnection();
-            const res = await db.getAllAsync('SELECT * FROM products WHERE status = "Available" AND deleted_at IS NULL');
+            const res = await db.getAllAsync("SELECT * FROM products WHERE (status = 'Available' OR status IS NULL OR status = '') AND deleted_at IS NULL");
             setProducts(res || []);
         } catch (e) { console.error("Failed to load POS products", e); }
     };
@@ -47,6 +54,14 @@ export default function POSScreen() {
             const res = await db.getAllAsync('SELECT * FROM categories WHERE deleted_at IS NULL ORDER BY name ASC');
             setCategories(res || []);
         } catch (e) { console.error("Failed to load categories", e); }
+    };
+
+    const loadDiscounts = async () => {
+        try {
+            const db = await getDBConnection();
+            const res = await db.getAllAsync('SELECT * FROM discounts WHERE deleted_at IS NULL');
+            setDiscounts(res || []);
+        } catch (e) { console.error("Failed to load discounts", e); }
     };
 
     const filteredProducts = useMemo(() => {
@@ -110,24 +125,34 @@ export default function POSScreen() {
 
     const totalAmount = useMemo(() => cart.reduce((sum, item) => sum + (item.price * item.quantity), 0), [cart]);
 
+    const appliedDiscount = useMemo(() => discounts.find(d => d.id === selectedDiscountId) || null, [discounts, selectedDiscountId]);
+
+    const discountValue = useMemo(() => {
+        if (!appliedDiscount) return 0;
+        return totalAmount * (appliedDiscount.percentage / 100);
+    }, [appliedDiscount, totalAmount]);
+
+    const finalAmountDue = useMemo(() => Math.max(0, totalAmount - discountValue), [totalAmount, discountValue]);
+
     const handleCheckout = () => {
         if (cart.length === 0) return;
         setCashReceived('');
         setCustomerName('');
+        setOrderType('Dine In');
         setOrderComplete(false);
-        setLastOrderId(null);
+        setLastOrderDisplay(null);
         setPaymentModalVisible(true);
     };
 
     const changeAmount = useMemo(() => {
         const cash = parseFloat(cashReceived) || 0;
-        return cash - totalAmount;
-    }, [cashReceived, totalAmount]);
+        return cash - finalAmountDue;
+    }, [cashReceived, finalAmountDue]);
 
     const submitOrder = async () => {
         const cash = parseFloat(cashReceived) || 0;
-        if (cash < totalAmount) {
-            Alert.alert("Insufficient Cash", "The cash received is less than the total amount.");
+        if (cash < finalAmountDue) {
+            Alert.alert("Insufficient Cash", "The cash received is less than the total amount due.");
             return;
         }
 
@@ -231,11 +256,21 @@ export default function POSScreen() {
 
             // Create Order
             const res = await db.runAsync(
-                'INSERT INTO orders (total_amount, cash_received, change_amount, status, customer_name, device_id, is_local, daily_order_number) VALUES (?, ?, ?, "Pending", ?, ?, 1, ?)',
-                totalAmount, cash, changeAmount, trimmedName, localDevId, dailyOrderNum
+                'INSERT INTO orders (total_amount, cash_received, change_amount, status, customer_name, device_id, is_local, daily_order_number, discount_id, discount_name, discount_amount, order_type) VALUES (?, ?, ?, "Pending", ?, ?, 1, ?, ?, ?, ?, ?)',
+                totalAmount, cash, changeAmount, trimmedName, localDevId, dailyOrderNum,
+                appliedDiscount ? appliedDiscount.id : null,
+                appliedDiscount ? appliedDiscount.name : null,
+                discountValue,
+                orderType
             );
+            
             const orderId = res.lastInsertRowId;
-            setLastOrderId(orderId);
+
+            const dayStr = String(new Date().getDate()).padStart(2, '0');
+            const paddedNo = String(dailyOrderNum + 1).padStart(2, '0');
+            setLastOrderDisplay(`${dayStr}-${paddedNo}`);
+
+            setFinalChange(changeAmount);
 
             // Create Order Items
             for (let item of cart) {
@@ -247,9 +282,11 @@ export default function POSScreen() {
 
             setOrderComplete(true);
             setCart([]);
+            setSelectedDiscountId(null);
             setTimeout(() => {
                 setPaymentModalVisible(false);
                 setOrderComplete(false);
+                setFinalChange(0);
             }, 3000);
 
         } catch (e) { console.error("Failed to submit order", e); }
@@ -359,10 +396,46 @@ export default function POSScreen() {
                 />
 
                 <View style={styles.cartFooter}>
+                    {discounts.length > 0 && (
+                        <View style={{ marginBottom: 15 }}>
+                            <Text style={{ fontSize: 13, color: '#6b7280', fontWeight: 'bold', marginBottom: 8 }}>Apply Discount:</Text>
+                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                                <TouchableOpacity 
+                                    style={[styles.discountChip, selectedDiscountId === null && styles.discountChipActive]}
+                                    onPress={() => setSelectedDiscountId(null)}
+                                >
+                                    <Text style={[styles.discountChipText, selectedDiscountId === null && styles.discountChipTextActive]}>None</Text>
+                                </TouchableOpacity>
+                                {discounts.map(d => (
+                                    <TouchableOpacity 
+                                        key={d.id}
+                                        style={[styles.discountChip, selectedDiscountId === d.id && styles.discountChipActive]}
+                                        onPress={() => setSelectedDiscountId(d.id)}
+                                    >
+                                        <Text style={[styles.discountChipText, selectedDiscountId === d.id && styles.discountChipTextActive]}>{d.name} ({d.percentage}%)</Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+                        </View>
+                    )}
+
                     <View style={styles.totalRow}>
-                        <Text style={styles.totalLabel}>Total</Text>
+                        <Text style={styles.totalLabel}>Subtotal</Text>
                         <Text style={styles.totalValue}>₱{totalAmount.toFixed(2)}</Text>
                     </View>
+                    
+                    {appliedDiscount && (
+                        <View style={[styles.totalRow, { marginTop: -10, marginBottom: 10 }]}>
+                            <Text style={[styles.totalLabel, { fontSize: 16, color: '#f59e0b' }]}>Discount (-{appliedDiscount.percentage}%)</Text>
+                            <Text style={[styles.totalValue, { fontSize: 18, color: '#f59e0b' }]}>-₱{discountValue.toFixed(2)}</Text>
+                        </View>
+                    )}
+
+                    <View style={[styles.totalRow, { borderTopWidth: 1, borderColor: '#e5e7eb', paddingTop: 10 }]}>
+                        <Text style={[styles.totalLabel, { fontSize: 22 }]}>Total Due</Text>
+                        <Text style={[styles.totalValue, { fontSize: 32, color: '#10b981' }]}>₱{finalAmountDue.toFixed(2)}</Text>
+                    </View>
+
                     <TouchableOpacity
                         style={[styles.checkoutBtn, cart.length === 0 && styles.disabledBtn]}
                         disabled={cart.length === 0}
@@ -424,17 +497,17 @@ export default function POSScreen() {
 
             {/* Payment Modal */}
             <Modal visible={paymentModalVisible} transparent animationType="slide">
-                <View style={styles.modalOverlay}>
+                <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
                     {orderComplete ? (
                         <View style={[styles.paymentModal, { alignItems: 'center', justifyContent: 'center' }]}>
                             <CheckCircle color="#10b981" size={60} />
                             <Text style={[styles.modalTitle, { marginTop: 20 }]}>Payment Complete!</Text>
                             <Text style={{ color: '#4b5563', fontSize: 16, marginTop: 10 }}>
-                                Change: <Text style={{ fontWeight: 'bold', color: '#1f2937' }}>₱{changeAmount.toFixed(2)}</Text>
+                                Change: <Text style={{ fontWeight: 'bold', color: '#1f2937' }}>₱{finalChange.toFixed(2)}</Text>
                             </Text>
-                            {lastOrderId && (
+                            {lastOrderDisplay && (
                                 <Text style={{ color: '#6b7280', marginTop: 6, fontSize: 14 }}>
-                                    Order #{lastOrderId}{customerName.trim() ? ` · ${customerName.trim()}` : ''}
+                                    Order #{lastOrderDisplay}{customerName.trim() ? ` · ${customerName.trim()}` : ''}
                                 </Text>
                             )}
                             <Text style={{ color: '#6b7280', marginTop: 15 }}>Sending to Kitchen Queue...</Text>
@@ -449,8 +522,31 @@ export default function POSScreen() {
                             </View>
 
                             <View style={styles.billSummary}>
-                                <Text style={styles.billTotalText}>Total Amount Due</Text>
-                                <Text style={styles.billTotalAmount}>₱{totalAmount.toFixed(2)}</Text>
+                                <Text style={styles.billTotalText}>Subtotal: ₱{totalAmount.toFixed(2)}</Text>
+                                {appliedDiscount && (
+                                    <Text style={[styles.billTotalText, { color: '#f59e0b', fontWeight: 'bold' }]}>
+                                        Discount: -₱{discountValue.toFixed(2)}
+                                    </Text>
+                                )}
+                                <Text style={{ fontSize: 18, color: '#6b7280', marginTop: 10 }}>Total Amount Due</Text>
+                                <Text style={styles.billTotalAmount}>₱{finalAmountDue.toFixed(2)}</Text>
+                            </View>
+
+                            {/* Order Type */}
+                            <Text style={styles.label}>Order Type</Text>
+                            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 20 }}>
+                                <TouchableOpacity
+                                    style={[styles.orderTypeChip, orderType === 'Dine In' && styles.orderTypeChipDineIn]}
+                                    onPress={() => setOrderType('Dine In')}
+                                >
+                                    <Text style={[styles.orderTypeChipText, orderType === 'Dine In' && styles.orderTypeChipTextDineIn]}>🍽️ Dine In</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.orderTypeChip, orderType === 'Take Out' && styles.orderTypeChipTakeOut]}
+                                    onPress={() => setOrderType('Take Out')}
+                                >
+                                    <Text style={[styles.orderTypeChipText, orderType === 'Take Out' && styles.orderTypeChipTextTakeOut]}>🥡 Take Out</Text>
+                                </TouchableOpacity>
                             </View>
 
                             {/* Customer Name */}
@@ -486,7 +582,7 @@ export default function POSScreen() {
                             </View>
                         </View>
                     )}
-                </View>
+                </KeyboardAvoidingView>
             </Modal>
         </View>
     );
@@ -567,7 +663,7 @@ const styles = StyleSheet.create({
     variantItemText: { fontSize: 16, fontWeight: '500', color: '#374151' },
 
     // Warning Modal
-    warningModal: { width: 460, backgroundColor: '#fff', borderRadius: 16, padding: 30, elevation: 10 },
+    warningModal: { width: '90%', maxWidth: 460, backgroundColor: '#fff', borderRadius: 16, padding: 30, elevation: 10 },
     warningTitle: { fontSize: 22, fontWeight: 'bold', color: '#b45309', marginBottom: 6 },
     warningSubtitle: { fontSize: 14, color: '#6b7280', marginBottom: 4 },
     warningItem: { backgroundColor: '#fef3c7', borderRadius: 8, padding: 10, marginBottom: 8, borderLeftWidth: 3, borderLeftColor: '#f59e0b' },
@@ -579,7 +675,7 @@ const styles = StyleSheet.create({
     warnContinueBtn: { flex: 1, paddingVertical: 14, borderRadius: 10, backgroundColor: '#f59e0b', alignItems: 'center' },
     warnContinueText: { fontWeight: 'bold', color: '#fff', fontSize: 15 },
 
-    paymentModal: { width: 500, backgroundColor: '#fff', borderRadius: 16, padding: 35, elevation: 10 },
+    paymentModal: { width: '90%', maxWidth: 500, backgroundColor: '#fff', borderRadius: 16, padding: 35, elevation: 10 },
     modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 25 },
     modalTitle: { fontSize: 24, fontWeight: 'bold', color: '#1f2937' },
 
@@ -592,5 +688,17 @@ const styles = StyleSheet.create({
 
     modalActions: { flexDirection: 'row', justifyContent: 'center', marginTop: 30 },
     saveButton: { borderRadius: 12, backgroundColor: '#10b981', alignItems: 'center', paddingHorizontal: 20 },
-    saveButtonText: { color: '#fff', fontWeight: 'bold' }
+    saveButtonText: { color: '#fff', fontWeight: 'bold' },
+
+    discountChip: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, backgroundColor: '#f3f4f6', borderWidth: 1, borderColor: '#e5e7eb' },
+    discountChipActive: { backgroundColor: '#fef3c7', borderColor: '#f59e0b' },
+    discountChipText: { fontSize: 13, color: '#6b7280', fontWeight: 'bold' },
+    discountChipTextActive: { color: '#d97706' },
+
+    orderTypeChip: { flex: 1, paddingVertical: 12, borderRadius: 20, backgroundColor: '#f3f4f6', borderWidth: 1.5, borderColor: '#e5e7eb', alignItems: 'center', justifyContent: 'center' },
+    orderTypeChipDineIn: { backgroundColor: '#ecfdf5', borderColor: '#10b981' },
+    orderTypeChipTakeOut: { backgroundColor: '#eff6ff', borderColor: '#3b82f6' },
+    orderTypeChipText: { fontSize: 15, color: '#6b7280', fontWeight: 'bold' },
+    orderTypeChipTextDineIn: { color: '#059669' },
+    orderTypeChipTextTakeOut: { color: '#2563eb' },
 });

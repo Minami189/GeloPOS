@@ -10,6 +10,7 @@ import AdminScreen from '../screens/AdminScreen';
 import POSScreen from '../screens/POSScreen';
 import KitchenScreen from '../screens/KitchenScreen';
 import AnalyticsScreen from '../screens/AnalyticsScreen';
+import InventoryScreen from '../screens/InventoryScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 
 const Stack = createNativeStackNavigator();
@@ -29,6 +30,7 @@ function AppContent() {
     else if (permissions.kitchen) initialRoute = 'Kitchen';
     else if (permissions.admin) initialRoute = 'Admin';
     else if (permissions.analytics) initialRoute = 'Analytics';
+    else if (permissions.inventory) initialRoute = 'Inventory';
     else if (permissions.settings) initialRoute = 'Settings';
 
     return (
@@ -39,6 +41,7 @@ function AppContent() {
                     initialRouteName={initialRoute}
                     screenOptions={{ headerShown: false, animation: 'none' }}
                 >
+                    {permissions.inventory && <Stack.Screen name="Inventory" component={InventoryScreen} />}
                     {permissions.pos && <Stack.Screen name="POS" component={POSScreen} />}
                     {permissions.kitchen && <Stack.Screen name="Kitchen" component={KitchenScreen} />}
                     {permissions.admin && <Stack.Screen name="Admin" component={AdminScreen} />}

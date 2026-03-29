@@ -25,6 +25,7 @@ export function AuthProvider({ children }) {
                         admin: user.role === 'admin' ? true : !!user.can_access_admin,
                         analytics: user.role === 'admin' ? true : !!user.can_access_analytics,
                         settings: user.role === 'admin' ? true : !!user.can_access_settings,
+                        inventory: user.role === 'admin' ? true : !!user.can_access_inventory,
                     }
                 });
                 return { success: true };
@@ -58,6 +59,7 @@ export function AuthProvider({ children }) {
                         admin: user.role === 'admin' ? true : !!user.can_access_admin,
                         analytics: user.role === 'admin' ? true : !!user.can_access_analytics,
                         settings: user.role === 'admin' ? true : !!user.can_access_settings,
+                        inventory: user.role === 'admin' ? true : !!user.can_access_inventory,
                     }
                 });
             }

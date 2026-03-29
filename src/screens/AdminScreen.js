@@ -1,16 +1,19 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
-import { Package, Tags, Utensils, RefreshCw, History } from 'lucide-react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, ScrollView } from 'react-native';
+import { Package, Tags, Utensils, RefreshCw, History, Percent, Clock } from 'lucide-react-native';
 import IngredientsTab from '../components/admin/IngredientsTab';
 import ProductsTab from '../components/admin/ProductsTab';
 import CategoriesTab from '../components/admin/CategoriesTab';
 import TransactionsTab from '../components/admin/TransactionsTab';
+import DiscountsTab from '../components/admin/DiscountsTab';
 import { syncAllToSupabase } from '../lib/syncService';
+import { useSyncContext } from '../context/SyncContext';
 
 export default function AdminScreen() {
     const [activeTab, setActiveTab] = useState('Products');
     const [isSyncing, setIsSyncing] = useState(false);
     const [syncTrigger, setSyncTrigger] = useState(0);
+    const { notifySynced } = useSyncContext();
 
     const handleSync = async () => {
         setIsSyncing(true);
@@ -19,6 +22,7 @@ export default function AdminScreen() {
 
         if (result.success) {
             setSyncTrigger(prev => prev + 1);
+            notifySynced();
             Alert.alert("Sync Success", result.message);
         } else {
             Alert.alert("Sync Failed", result.error || "Unknown error occurred.");
@@ -38,30 +42,38 @@ export default function AdminScreen() {
             </View>
 
             <View style={styles.tabsContainer}>
-                <TouchableOpacity
-                    style={[styles.tab, activeTab === 'Products' && styles.activeTab]}
-                    onPress={() => setActiveTab('Products')}>
-                    <Package color={activeTab === 'Products' ? "#1f2937" : "#6b7280"} size={20} />
-                    <Text style={[styles.tabText, activeTab === 'Products' && styles.activeTabText]}>Products</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                    style={[styles.tab, activeTab === 'Categories' && styles.activeTab]}
-                    onPress={() => setActiveTab('Categories')}>
-                    <Tags color={activeTab === 'Categories' ? "#1f2937" : "#6b7280"} size={20} />
-                    <Text style={[styles.tabText, activeTab === 'Categories' && styles.activeTabText]}>Categories</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                    style={[styles.tab, activeTab === 'Ingredients' && styles.activeTab]}
-                    onPress={() => setActiveTab('Ingredients')}>
-                    <Utensils color={activeTab === 'Ingredients' ? "#1f2937" : "#6b7280"} size={20} />
-                    <Text style={[styles.tabText, activeTab === 'Ingredients' && styles.activeTabText]}>Ingredients</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                    style={[styles.tab, activeTab === 'Transactions' && styles.activeTab]}
-                    onPress={() => setActiveTab('Transactions')}>
-                    <History color={activeTab === 'Transactions' ? "#1f2937" : "#6b7280"} size={20} />
-                    <Text style={[styles.tabText, activeTab === 'Transactions' && styles.activeTabText]}>Today's Transactions</Text>
-                </TouchableOpacity>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 15, paddingBottom: 5 }}>
+                    <TouchableOpacity
+                        style={[styles.tab, activeTab === 'Categories' && styles.activeTab]}
+                        onPress={() => setActiveTab('Categories')}>
+                        <Tags color={activeTab === 'Categories' ? "#1f2937" : "#6b7280"} size={20} />
+                        <Text style={[styles.tabText, activeTab === 'Categories' && styles.activeTabText]}>Categories</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.tab, activeTab === 'Products' && styles.activeTab]}
+                        onPress={() => setActiveTab('Products')}>
+                        <Package color={activeTab === 'Products' ? "#1f2937" : "#6b7280"} size={20} />
+                        <Text style={[styles.tabText, activeTab === 'Products' && styles.activeTabText]}>Products</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.tab, activeTab === 'Ingredients' && styles.activeTab]}
+                        onPress={() => setActiveTab('Ingredients')}>
+                        <Utensils color={activeTab === 'Ingredients' ? "#1f2937" : "#6b7280"} size={20} />
+                        <Text style={[styles.tabText, activeTab === 'Ingredients' && styles.activeTabText]}>Ingredients</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.tab, activeTab === 'Discounts' && styles.activeTab]}
+                        onPress={() => setActiveTab('Discounts')}>
+                        <Percent color={activeTab === 'Discounts' ? "#1f2937" : "#6b7280"} size={20} />
+                        <Text style={[styles.tabText, activeTab === 'Discounts' && styles.activeTabText]}>Discounts</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.tab, activeTab === 'Transactions' && styles.activeTab]}
+                        onPress={() => setActiveTab('Transactions')}>
+                        <History color={activeTab === 'Transactions' ? "#1f2937" : "#6b7280"} size={20} />
+                        <Text style={[styles.tabText, activeTab === 'Transactions' && styles.activeTabText]}>Orders Summary</Text>
+                    </TouchableOpacity>
+                </ScrollView>
             </View>
 
             <View style={styles.contentContainer}>
@@ -69,6 +81,7 @@ export default function AdminScreen() {
                 {activeTab === 'Categories' && <CategoriesTab key={`categories-${syncTrigger}`} />}
                 {activeTab === 'Ingredients' && <IngredientsTab key={`ingredients-${syncTrigger}`} />}
                 {activeTab === 'Transactions' && <TransactionsTab key={`transactions-${syncTrigger}`} />}
+                {activeTab === 'Discounts' && <DiscountsTab key={`discounts-${syncTrigger}`} />}
             </View>
         </View>
     );
