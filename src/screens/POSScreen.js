@@ -5,7 +5,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { ShoppingCart, Plus, Minus, Trash2, X, CheckCircle, Search } from 'lucide-react-native';
 import { useSyncContext } from '../context/SyncContext';
 
-export default function POSScreen() {
+export default function POSScreen({ navigation }) {
     const { syncEpoch } = useSyncContext();
     const [products, setProducts] = useState([]);
     const [categories, setCategories] = useState([]);
@@ -25,6 +25,7 @@ export default function POSScreen() {
     const [customerName, setCustomerName] = useState('');
     const [orderType, setOrderType] = useState('Dine In');
     const [orderComplete, setOrderComplete] = useState(false);
+    const [completedOrderItems, setCompletedOrderItems] = useState([]);
     const [lastOrderDisplay, setLastOrderDisplay] = useState(null);
     const [finalChange, setFinalChange] = useState(0);
 
@@ -198,13 +199,13 @@ export default function POSScreen() {
             console.log("--- STARTING INGREDIENT DEDUCTION ---");
             for (let item of cart) {
                 console.log(`Processing cart item: ${item.product.name} x ${item.quantity}`);
-                
+
                 // IMPORTANT: Use LOWER and TRIM for robust matching after sync ID shifts
                 const latestProduct = await db.getFirstAsync(
-                    'SELECT id FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND deleted_at IS NULL', 
+                    'SELECT id FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND deleted_at IS NULL',
                     item.product.name
                 );
-                
+
                 if (!latestProduct) {
                     console.warn(`Product lookup failed for: ${item.product.name}`);
                     continue;
@@ -214,7 +215,7 @@ export default function POSScreen() {
                 let latestVariantId = null;
                 if (item.variant) {
                     const latestVar = await db.getFirstAsync(
-                        'SELECT id FROM product_variants WHERE product_id = ? AND LOWER(TRIM(name)) = LOWER(TRIM(?)) AND deleted_at IS NULL', 
+                        'SELECT id FROM product_variants WHERE product_id = ? AND LOWER(TRIM(name)) = LOWER(TRIM(?)) AND deleted_at IS NULL',
                         productId, item.variant.name
                     );
                     if (latestVar) {
@@ -256,14 +257,14 @@ export default function POSScreen() {
 
             // Create Order
             const res = await db.runAsync(
-                'INSERT INTO orders (total_amount, cash_received, change_amount, status, customer_name, device_id, is_local, daily_order_number, discount_id, discount_name, discount_amount, order_type) VALUES (?, ?, ?, "Pending", ?, ?, 1, ?, ?, ?, ?, ?)',
-                totalAmount, cash, changeAmount, trimmedName, localDevId, dailyOrderNum,
+                'INSERT INTO orders (total_amount, cash_received, change_amount, status, customer_name, device_id, is_local, daily_order_number, discount_id, discount_name, discount_amount, order_type) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)',
+                totalAmount, cash, changeAmount, 'Pending', trimmedName, localDevId, dailyOrderNum,
                 appliedDiscount ? appliedDiscount.id : null,
                 appliedDiscount ? appliedDiscount.name : null,
                 discountValue,
                 orderType
             );
-            
+
             const orderId = res.lastInsertRowId;
 
             const dayStr = String(new Date().getDate()).padStart(2, '0');
@@ -280,6 +281,7 @@ export default function POSScreen() {
                 );
             }
 
+            setCompletedOrderItems([...cart]);
             setOrderComplete(true);
             setCart([]);
             setSelectedDiscountId(null);
@@ -287,6 +289,7 @@ export default function POSScreen() {
                 setPaymentModalVisible(false);
                 setOrderComplete(false);
                 setFinalChange(0);
+                setCompletedOrderItems([]);
             }, 3000);
 
         } catch (e) { console.error("Failed to submit order", e); }
@@ -400,14 +403,14 @@ export default function POSScreen() {
                         <View style={{ marginBottom: 15 }}>
                             <Text style={{ fontSize: 13, color: '#6b7280', fontWeight: 'bold', marginBottom: 8 }}>Apply Discount:</Text>
                             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                                <TouchableOpacity 
+                                <TouchableOpacity
                                     style={[styles.discountChip, selectedDiscountId === null && styles.discountChipActive]}
                                     onPress={() => setSelectedDiscountId(null)}
                                 >
                                     <Text style={[styles.discountChipText, selectedDiscountId === null && styles.discountChipTextActive]}>None</Text>
                                 </TouchableOpacity>
                                 {discounts.map(d => (
-                                    <TouchableOpacity 
+                                    <TouchableOpacity
                                         key={d.id}
                                         style={[styles.discountChip, selectedDiscountId === d.id && styles.discountChipActive]}
                                         onPress={() => setSelectedDiscountId(d.id)}
@@ -423,7 +426,7 @@ export default function POSScreen() {
                         <Text style={styles.totalLabel}>Subtotal</Text>
                         <Text style={styles.totalValue}>₱{totalAmount.toFixed(2)}</Text>
                     </View>
-                    
+
                     {appliedDiscount && (
                         <View style={[styles.totalRow, { marginTop: -10, marginBottom: 10 }]}>
                             <Text style={[styles.totalLabel, { fontSize: 16, color: '#f59e0b' }]}>Discount (-{appliedDiscount.percentage}%)</Text>
@@ -510,7 +513,25 @@ export default function POSScreen() {
                                     Order #{lastOrderDisplay}{customerName.trim() ? ` · ${customerName.trim()}` : ''}
                                 </Text>
                             )}
-                            <Text style={{ color: '#6b7280', marginTop: 15 }}>Sending to Kitchen Queue...</Text>
+
+                            {completedOrderItems.length > 0 && (
+                                <View style={{ width: '100%', maxHeight: 150, marginTop: 15, paddingHorizontal: 10 }}>
+                                    <ScrollView showsVerticalScrollIndicator={false}>
+                                        {completedOrderItems.map((item, idx) => (
+                                            <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: 1, borderColor: '#f3f4f6' }}>
+                                                <Text style={{ color: '#374151', fontSize: 14, flex: 1 }} numberOfLines={1}>
+                                                    {item.quantity}x {item.product.name} {item.variant ? `(${item.variant.name})` : ''}
+                                                </Text>
+                                                <Text style={{ color: '#6b7280', fontSize: 14 }}>
+                                                    ₱{(item.price * item.quantity).toFixed(2)}
+                                                </Text>
+                                            </View>
+                                        ))}
+                                    </ScrollView>
+                                </View>
+                            )}
+
+                            <Text style={{ color: '#6b7280', marginTop: 15, fontStyle: 'italic' }}>Sending to Kitchen Queue...</Text>
                         </View>
                     ) : (
                         <View style={styles.paymentModal}>
@@ -611,8 +632,8 @@ const styles = StyleSheet.create({
     },
     searchInput: { flex: 1, fontSize: 15, color: '#1f2937', padding: 0 },
 
-    categoryNav: { marginBottom: 16, flexGrow: 0 },
-    categoryNavContent: { flexDirection: 'row', gap: 10, paddingBottom: 4 },
+    categoryNav: { marginBottom: 16, flexGrow: 0, minHeight: 45, overflowY: 'scroll' },
+    categoryNavContent: { flexDirection: 'row', gap: 10, paddingBottom: 10 },
     categoryChip: {
         paddingHorizontal: 18,
         paddingVertical: 8,

@@ -347,7 +347,7 @@ export const initDB = async () => {
 export const getDeviceId = async () => {
     try {
         const db = await getDBConnection();
-        const settings = await db.getFirstAsync('SELECT value FROM settings WHERE key = "device_id"');
+        const settings = await db.getFirstAsync('SELECT value FROM settings WHERE key = ?', 'device_id');
         
         if (settings && settings.value) {
             return settings.value;
@@ -355,7 +355,7 @@ export const getDeviceId = async () => {
         
         // Generate new random ID
         const newId = `DEV-${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
-        await db.runAsync('INSERT INTO settings (key, value) VALUES ("device_id", ?)', newId);
+        await db.runAsync('INSERT INTO settings (key, value) VALUES (?, ?)', 'device_id', newId);
         return newId;
     } catch (e) {
         console.error("Failed to get device_id", e);

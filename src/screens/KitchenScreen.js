@@ -31,7 +31,7 @@ export default function KitchenScreen() {
     const loadPendingOrders = async () => {
         try {
             const db = await getDBConnection();
-            const ordersRes = await db.getAllAsync('SELECT * FROM orders WHERE status = "Pending" ORDER BY created_at ASC');
+            const ordersRes = await db.getAllAsync('SELECT * FROM orders WHERE status = ? ORDER BY created_at ASC', 'Pending');
 
             let structuredOrders = [];
             for (let o of ordersRes) {
@@ -80,11 +80,12 @@ export default function KitchenScreen() {
         try {
             const db = await getDBConnection();
             // Important: Mark synced = 0 so the status update is pushed to Supabase
-            await db.runAsync('UPDATE orders SET status = "Completed", synced = 0 WHERE id = ?', pendingOrderId);
+            await db.runAsync('UPDATE orders SET status = ?, synced = 0 WHERE id = ?', 'Completed', pendingOrderId);
             loadPendingOrders();
             // Reload history in the background so it is up to date when next opened
             const completedOrders = await db.getAllAsync(
-                'SELECT * FROM orders WHERE status = "Completed" ORDER BY created_at DESC LIMIT 50'
+                'SELECT * FROM orders WHERE status = ? ORDER BY created_at DESC LIMIT 50',
+                'Completed'
             );
             let structured = [];
             for (let o of completedOrders) {
@@ -111,7 +112,7 @@ export default function KitchenScreen() {
         try {
             const db = await getDBConnection();
             const completedOrders = await db.getAllAsync(
-                'SELECT * FROM orders WHERE status = "Completed" ORDER BY created_at DESC LIMIT 50'
+                'SELECT * FROM orders WHERE status = \'Completed\' ORDER BY created_at DESC LIMIT 50'
             );
             let structured = [];
             for (let o of completedOrders) {
@@ -176,54 +177,58 @@ export default function KitchenScreen() {
                 </View>
             )}
 
-            <FlatList
-                data={orders}
-                numColumns={3}
-                keyExtractor={item => item.id.toString()}
-                renderItem={({ item }) => (
-                    <View style={styles.orderCard}>
-                        <View style={styles.cardHeader}>
-                            <View style={{ flex: 1 }}>
-                                <Text style={styles.orderNumber}>{orderLabel(item)}</Text>
-                            </View>
-                            <View style={{ alignItems: 'flex-end' }}>
-                                <Text style={styles.timeLabel}>Time Elapsed</Text>
-                                <Text style={styles.timeValue}>{formatElapsedTime(item.created_at)}</Text>
-                            </View>
-                        </View>
-
-                        {/* Order Type Pill */}
-                        <View style={{ marginBottom: 15, flexDirection: 'row' }}>
-                            <View style={[styles.orderTypeBadge, { backgroundColor: item.order_type === 'Take Out' ? '#dbeafe' : '#dcfce7' }]}>
-                                <Text style={[styles.orderTypeBadgeText, { color: item.order_type === 'Take Out' ? '#1d4ed8' : '#166534' }]}>
-                                    {item.order_type === 'Take Out' ? '🥡 Take Out' : '🍽️ Dine In'}
-                                </Text>
-                            </View>
-                        </View>
-
-                        <FlatList
-                            data={item.items}
-                            keyExtractor={i => i.id.toString()}
-                            style={styles.itemsList}
-                            scrollEnabled={false}
-                            renderItem={({ item: oi }) => (
-                                <View style={styles.itemRow}>
-                                    <Text style={styles.itemTitle}>{oi.quantity}x - {oi.product_name}</Text>
-                                    {oi.variant_name ? <Text style={styles.itemVariant}>Variant: {oi.variant_name}</Text> : null}
-                                    <View style={styles.divider} />
+            {orders.length === 0 ? (
+                <Text style={{ fontSize: 18, color: '#6b7280', marginTop: 50 }}>No pending orders in the queue.</Text>
+            ) : (
+                <ScrollView 
+                    horizontal={true} 
+                    showsHorizontalScrollIndicator={true} 
+                    contentContainerStyle={styles.ordersGrid}
+                >
+                    {orders.map(item => (
+                        <View key={item.id} style={styles.orderCard}>
+                            <View style={styles.cardHeader}>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.orderNumber}>{orderLabel(item)}</Text>
                                 </View>
-                            )}
-                        />
+                                <View style={{ alignItems: 'flex-end' }}>
+                                    <Text style={styles.timeLabel}>Time Elapsed</Text>
+                                    <Text style={styles.timeValue}>{formatElapsedTime(item.created_at)}</Text>
+                                </View>
+                            </View>
 
-                        {/* Complete button — requires confirmation */}
-                        <TouchableOpacity style={styles.completeBtn} onPress={() => requestComplete(item.id)}>
-                            <CheckCircle color="#0369a1" size={16} style={{ marginRight: 6 }} />
-                            <Text style={styles.completeBtnText}>Complete Order</Text>
-                        </TouchableOpacity>
-                    </View>
-                )}
-                ListEmptyComponent={<Text style={{ fontSize: 18, color: '#6b7280', marginTop: 50 }}>No pending orders in the queue.</Text>}
-            />
+                            {/* Order Type Pill */}
+                            <View style={{ marginBottom: 15, flexDirection: 'row' }}>
+                                <View style={[styles.orderTypeBadge, { backgroundColor: item.order_type === 'Take Out' ? '#dbeafe' : '#dcfce7' }]}>
+                                    <Text style={[styles.orderTypeBadgeText, { color: item.order_type === 'Take Out' ? '#1d4ed8' : '#166534' }]}>
+                                        {item.order_type === 'Take Out' ? '🥡 Take Out' : '🍽️ Dine In'}
+                                    </Text>
+                                </View>
+                            </View>
+
+                            <FlatList
+                                data={item.items}
+                                keyExtractor={i => i.id.toString()}
+                                style={styles.itemsList}
+                                scrollEnabled={false}
+                                renderItem={({ item: oi }) => (
+                                    <View style={styles.itemRow}>
+                                        <Text style={styles.itemTitle}>{oi.quantity}x - {oi.product_name}</Text>
+                                        {oi.variant_name ? <Text style={styles.itemVariant}>Variant: {oi.variant_name}</Text> : null}
+                                        <View style={styles.divider} />
+                                    </View>
+                                )}
+                            />
+
+                            {/* Complete button — requires confirmation */}
+                            <TouchableOpacity style={styles.completeBtn} onPress={() => requestComplete(item.id)}>
+                                <CheckCircle color="#0369a1" size={16} style={{ marginRight: 6 }} />
+                                <Text style={styles.completeBtnText}>Complete Order</Text>
+                            </TouchableOpacity>
+                        </View>
+                    ))}
+                </ScrollView>
+            )}
 
             {/* ─── Confirmation Modal ─── */}
             <Modal visible={confirmVisible} transparent animationType="fade">
@@ -311,6 +316,12 @@ const styles = StyleSheet.create({
         borderColor: '#bae6fd',
     },
     historyBtnText: { color: '#0369a1', fontWeight: 'bold', fontSize: 15 },
+    
+    ordersGrid: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        paddingBottom: 20
+    },
 
     orderCard: { width: 320, backgroundColor: '#fff', borderRadius: 16, padding: 20, margin: 15, elevation: 4 },
     cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#e0f2fe', padding: 15, borderRadius: 12, marginBottom: 15 },
@@ -318,19 +329,21 @@ const styles = StyleSheet.create({
     timeLabel: { fontSize: 12, color: '#0284c7' },
     timeValue: { fontSize: 18, fontWeight: 'bold', color: '#0369a1' },
 
-    itemsList: { flex: 1, marginBottom: 15 },
+    itemsList: { marginBottom: 15 },
     itemRow: { marginVertical: 8 },
     itemTitle: { fontSize: 16, fontWeight: 'bold', color: '#1f2937' },
     itemVariant: { fontSize: 14, color: '#6b7280', marginTop: 2 },
     divider: { height: 1, backgroundColor: '#f3f4f6', marginTop: 10 },
 
     completeBtn: {
+        display: 'flex',
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1,
         borderColor: '#38bdf8',
         paddingVertical: 12,
+        marginHorizontal: 10,
         borderRadius: 8,
     },
     completeBtnText: { color: '#0369a1', fontWeight: 'bold', fontSize: 14 },
@@ -359,6 +372,7 @@ const styles = StyleSheet.create({
     cancelBtnText: { color: '#374151', fontWeight: 'bold', fontSize: 16 },
     doneBtn: {
         flex: 1,
+        width: 250,
         paddingVertical: 14,
         borderRadius: 10,
         backgroundColor: '#10b981',
