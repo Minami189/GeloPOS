@@ -9,9 +9,9 @@
     <link rel="apple-touch-icon" href="/icon.png" />
     <meta name="theme-color" content="#3b82f6" />
     <style>
-      body { background-color: #0d1117; color: white; margin: 0; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; overflow: hidden; }
+      body { background-color: #0d1117; color: white; margin: 0; font-family: sans-serif; height: 100vh; overflow: hidden; }
       #root { display: none; width: 100%; height: 100vh; }
-      #gatekeeper { text-align: center; padding: 20px; display: none; }
+      #gatekeeper { text-align: center; padding: 20px; display: none; flex-direction: column; align-items: center; justify-content: center; height: 100vh; box-sizing: border-box; }
       #gatekeeper h1 { font-size: 24px; margin-bottom: 10px; color: #3b82f6; }
       #gatekeeper p { font-size: 16px; color: #8899a6; max-width: 400px; margin: 0 auto 20px; }
       #gatekeeper .icon { font-size: 48px; margin-bottom: 20px; }
@@ -31,7 +31,7 @@
           if (isStandalone) {
             document.getElementById('root').style.display = 'flex';
           } else {
-            document.getElementById('gatekeeper').style.display = 'block';
+            document.getElementById('gatekeeper').style.display = 'flex';
             // Stop other scripts from running
             window.stop();
           }
@@ -58,14 +58,16 @@
     <div id="root"></div>
 
     <script>
-      if ('serviceWorker' in navigator) {
+      if ('serviceWorker' in navigator && window.location.protocol !== 'file:') {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js').then((registration) => {
+          navigator.serviceWorker.register('./sw.js').then((registration) => {
             console.log('SW registered: ', registration);
           }, (err) => {
             console.log('SW registration failed: ', err);
           });
         });
+      } else {
+        console.log('Service Worker skipped for this environment (file:// protocol is not supported).');
       }
     </script>
   </body>

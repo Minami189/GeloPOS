@@ -8,14 +8,23 @@ import { initDB } from './src/lib/database';
 // Global Web Fallback for React Native Alerts
 if (Platform.OS === 'web') {
   Alert.alert = (title, message, buttons) => {
+    // Clear focus before triggering blocking alert
+    if (document.activeElement) document.activeElement.blur();
+
     if (!buttons || buttons.length === 0 || (buttons.length === 1 && !buttons[0].onPress)) {
       window.alert(`${title}\n\n${message}`);
+      setTimeout(() => window.focus(), 50);
     } else {
       const confirmBtn = buttons.find(b => b.style === 'destructive' || b.text !== 'Cancel') || buttons[buttons.length - 1];
       const result = window.confirm(`${title}\n\n${message}`);
-      if (result && confirmBtn && confirmBtn.onPress) {
-        confirmBtn.onPress();
-      }
+      
+      // Force Electron Window to regain focus after the OS native dialog is destroyed
+      setTimeout(() => {
+        window.focus();
+        if (result && confirmBtn && confirmBtn.onPress) {
+          confirmBtn.onPress();
+        }
+      }, 50);
     }
   };
 }
