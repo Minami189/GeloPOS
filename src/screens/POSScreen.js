@@ -4,6 +4,7 @@ import { getDBConnection, getDeviceId } from '../lib/database';
 import { useFocusEffect } from '@react-navigation/native';
 import { ShoppingCart, Plus, Minus, Trash2, X, CheckCircle, Search } from 'lucide-react-native';
 import { useSyncContext } from '../context/SyncContext';
+import * as Print from 'expo-print';
 
 export default function POSScreen({ navigation }) {
     const { syncEpoch } = useSyncContext();
@@ -26,6 +27,8 @@ export default function POSScreen({ navigation }) {
     const [orderType, setOrderType] = useState('Dine In');
     const [orderComplete, setOrderComplete] = useState(false);
     const [completedOrderItems, setCompletedOrderItems] = useState([]);
+    const [completedOrderId, setCompletedOrderId] = useState(null);
+    const [completedOrderDetails, setCompletedOrderDetails] = useState(null);
     const [lastOrderDisplay, setLastOrderDisplay] = useState(null);
     const [finalChange, setFinalChange] = useState(0);
 
@@ -198,47 +201,18 @@ export default function POSScreen({ navigation }) {
             // Deduct stock for ingredients
             console.log("--- STARTING INGREDIENT DEDUCTION ---");
             for (let item of cart) {
-                console.log(`Processing cart item: ${item.product.name} x ${item.quantity}`);
-
-                // IMPORTANT: Use LOWER and TRIM for robust matching after sync ID shifts
-                const latestProduct = await db.getFirstAsync(
-                    'SELECT id FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND deleted_at IS NULL',
-                    item.product.name
-                );
-
-                if (!latestProduct) {
-                    console.warn(`Product lookup failed for: ${item.product.name}`);
-                    continue;
-                }
-                const productId = latestProduct.id;
-
-                let latestVariantId = null;
-                if (item.variant) {
-                    const latestVar = await db.getFirstAsync(
-                        'SELECT id FROM product_variants WHERE product_id = ? AND LOWER(TRIM(name)) = LOWER(TRIM(?)) AND deleted_at IS NULL',
-                        productId, item.variant.name
-                    );
-                    if (latestVar) {
-                        latestVariantId = latestVar.id;
-                        console.log(`Matched variant: ${item.variant.name} -> ID: ${latestVariantId}`);
-                    } else {
-                        console.warn(`Variant lookup failed for: ${item.variant.name} on product ID: ${productId}`);
-                    }
-                }
+                const productId = item.product.id;
+                const variantId = item.variant ? item.variant.id : null;
 
                 let recs;
-                if (latestVariantId) {
-                    recs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id = ? AND deleted_at IS NULL', productId, latestVariantId);
+                if (variantId) {
+                    recs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id = ? AND deleted_at IS NULL', productId, variantId);
                 } else {
                     recs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id IS NULL AND deleted_at IS NULL', productId);
                 }
 
-                console.log(`Found ${recs.length} recipe lines for product ID ${productId}`);
-
                 for (let r of recs) {
                     const totalUsed = r.quantity * item.quantity;
-                    console.log(`Deducting ${totalUsed} from ingredient ID ${r.ingredient_id}`);
-                    // Mark synced=0 so the updated stock is pushed to Supabase on next sync
                     await db.runAsync(
                         'UPDATE ingredients SET stock_quantity = stock_quantity - ?, synced = 0 WHERE id = ?',
                         totalUsed, r.ingredient_id
@@ -281,18 +255,184 @@ export default function POSScreen({ navigation }) {
                 );
             }
 
+            setCompletedOrderId(orderId);
+            setCompletedOrderDetails({
+                id: orderId,
+                customerName: trimmedName || '',
+                items: [...cart],
+                total: finalAmountDue,
+                change: changeAmount,
+                discountAmt: discountValue,
+                discountName: appliedDiscount ? appliedDiscount.name : ''
+            });
             setCompletedOrderItems([...cart]);
             setOrderComplete(true);
             setCart([]);
             setSelectedDiscountId(null);
-            setTimeout(() => {
-                setPaymentModalVisible(false);
-                setOrderComplete(false);
-                setFinalChange(0);
-                setCompletedOrderItems([]);
-            }, 3000);
 
         } catch (e) { console.error("Failed to submit order", e); }
+    };
+
+    const closePaymentModal = () => {
+        setPaymentModalVisible(false);
+        setOrderComplete(false);
+        setFinalChange(0);
+        setCompletedOrderItems([]);
+        setCompletedOrderId(null);
+        setCompletedOrderDetails(null);
+    };
+
+    const generateReceiptHtml = (orderIdDisplay, customerName, items, total, change, discountAmt, discountName) => {
+        const d = new Date();
+        const dateStr = d.toLocaleString();
+
+        let itemsHtml = items.map(item => `
+            <tr>
+                <td style="padding: 4px 0; font-size: 14px;">${item.quantity}x ${item.product.name} ${item.variant ? `(${item.variant.name})` : ''}</td>
+                <td style="padding: 4px 0; text-align: right; font-size: 14px;">PHP ${(item.price * item.quantity).toFixed(2)}</td>
+            </tr>
+        `).join('');
+
+        let discountHtml = '';
+        if (discountAmt > 0) {
+            discountHtml = `
+            <tr>
+                <td style="padding: 4px 0; font-size: 14px; font-weight: bold;">Discount (${discountName || ''})</td>
+                <td style="padding: 4px 0; text-align: right; font-size: 14px; font-weight: bold;">- PHP ${discountAmt.toFixed(2)}</td>
+            </tr>`;
+        }
+
+        const totalCash = total + change;
+
+        return `
+            <html>
+                <head>
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no" />
+                    <style>
+                        body { font-family: 'Courier New', Courier, monospace; width: 300px; margin: 0 auto; color: #000; padding: 10px; }
+                        h1 { text-align: center; font-size: 24px; }
+                        h2 { text-align: center; font-size: 18px; }
+                        p { margin: 0 0 5px 0; font-size: 12px; text-align: center; }
+                        .divider { border-bottom: 1px dashed #000; margin: 10px 0; }
+                        table { width: 100%; border-collapse: collapse; }
+                        td { vertical-align: top; }
+                        .center { text-align: center; }
+                        .right { text-align: right; }
+                        .bold { font-weight: bold; }
+                    </style>
+                </head>
+                <body>
+                    <div class="divider"></div>
+                    <p>THIS IS NOT AN OFFICIAL RECEIPT</p>
+                    <div class="divider"></div>
+                    <h1>Gelo's POS</h1>
+                    <h2>ORDER SLIP</h2>
+                    <p class="center">
+                        ${dateStr}
+                    </p>
+                    <p>Order #${orderIdDisplay}</p>
+                    <p>Order Type:<b> ${orderType} </b></p>
+                    ${customerName ? `<p>Customer: ${customerName}</p>` : ''}
+                    <div class="divider"></div>
+                    <table>
+                        ${itemsHtml}
+                        ${discountHtml}
+                    </table>
+                    <div class="divider"></div>
+                    <table>
+                        <tr>
+                            <td class="bold" style="padding: 4px 0;">Total</td>
+                            <td class="right bold" style="padding: 4px 0;">PHP ${total.toFixed(2)}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 4px 0;">Cash</td>
+                            <td class="right" style="padding: 4px 0;">PHP ${totalCash.toFixed(2)}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 4px 0;">Change</td>
+                            <td class="right" style="padding: 4px 0;">PHP ${change.toFixed(2)}</td>
+                        </tr>
+                    </table>
+                    <div class="divider"></div>
+                    <p>FOR INTERNAL USE ONLY</p>
+                    <p>THIS IS NOT AN OFFICIAL RECEIPT</p>
+                    <div class="divider"></div>
+                </body>
+            </html>
+        `;
+    };
+
+    const handlePrintReceipt = async () => {
+        if (!completedOrderDetails) return;
+        const { id, customerName, items, total, change, discountAmt, discountName } = completedOrderDetails;
+
+        const html = generateReceiptHtml(lastOrderDisplay || id, customerName, items, total, change, discountAmt, discountName);
+
+        try {
+            if (Platform.OS === 'web') {
+                const iframe = document.createElement('iframe');
+                // Hiding via display: none causes Chromium to print the parent window. We must position it off-screen.
+                iframe.style.position = 'absolute';
+                iframe.style.top = '-10000px';
+                iframe.style.left = '-10000px';
+                iframe.style.width = '0px';
+                iframe.style.height = '0px';
+                iframe.style.border = 'none';
+
+                document.body.appendChild(iframe);
+                iframe.contentDocument.write(html);
+                iframe.contentDocument.close();
+                iframe.contentWindow.focus();
+                // Adding a tiny delay ensures styles and fonts are applied before printing
+                setTimeout(() => {
+                    iframe.contentWindow.print();
+                    setTimeout(() => {
+                        document.body.removeChild(iframe);
+                    }, 1000);
+                }, 200);
+            } else {
+                await Print.printAsync({
+                    html,
+                    orientation: Print.Orientation.portrait
+                });
+            }
+        } catch (e) {
+            console.warn("Printing skipped or failed", e);
+            Alert.alert("Print Error", "Could not print. Please proceed without printing.");
+        }
+    };
+
+    const cancelCheckoutOrder = async () => {
+        if (!completedOrderId) return;
+        try {
+            const db = await getDBConnection();
+
+            const itemsRes = await db.getAllAsync('SELECT product_id, variant_id, quantity FROM order_items WHERE order_id = ?', completedOrderId);
+
+            for (let item of itemsRes) {
+                let recs;
+                if (item.variant_id) {
+                    recs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id = ? AND deleted_at IS NULL', item.product_id, item.variant_id);
+                } else {
+                    recs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id IS NULL AND deleted_at IS NULL', item.product_id);
+                }
+                for (let r of recs) {
+                    const totalRestock = r.quantity * item.quantity;
+                    await db.runAsync(
+                        'UPDATE ingredients SET stock_quantity = stock_quantity + ?, synced = 0 WHERE id = ?',
+                        totalRestock, r.ingredient_id
+                    );
+                }
+            }
+
+            await db.runAsync('UPDATE orders SET status = ?, synced = 0 WHERE id = ?', 'Cancelled', completedOrderId);
+
+            Alert.alert("Order Cancelled", "The order was cancelled and inventory has been rolled back.");
+            closePaymentModal();
+        } catch (e) {
+            console.error("Failed to cancel checkout order", e);
+            Alert.alert("Error", "Failed to rollback inventory.");
+        }
     };
 
     return (
@@ -531,7 +671,26 @@ export default function POSScreen({ navigation }) {
                                 </View>
                             )}
 
-                            <Text style={{ color: '#6b7280', marginTop: 15, fontStyle: 'italic' }}>Sending to Kitchen Queue...</Text>
+                            <View style={{ flexDirection: 'row', gap: 10, marginTop: 25, width: '100%' }}>
+                                <TouchableOpacity
+                                    style={[styles.checkoutBtn, { flex: 1, backgroundColor: '#f3f4f6', borderWidth: 1, borderColor: '#ef4444' }]}
+                                    onPress={cancelCheckoutOrder}
+                                >
+                                    <Text style={{ color: '#ef4444', fontWeight: 'bold', fontSize: 16, textAlign: 'center' }}>Cancel Order</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.checkoutBtn, { flex: 1.5, backgroundColor: '#3b82f6' }]}
+                                    onPress={handlePrintReceipt}
+                                >
+                                    <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16, textAlign: 'center' }}>Print Receipt</Text>
+                                </TouchableOpacity>
+                            </View>
+                            <TouchableOpacity
+                                style={[styles.checkoutBtn, { width: '100%', marginTop: 10, backgroundColor: '#10b981' }]}
+                                onPress={closePaymentModal}
+                            >
+                                <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16, textAlign: 'center' }}>Done</Text>
+                            </TouchableOpacity>
                         </View>
                     ) : (
                         <View style={styles.paymentModal}>

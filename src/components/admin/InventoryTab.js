@@ -68,8 +68,8 @@ export default function InventoryTab() {
         try {
             const db = await getDBConnection();
             await db.runAsync(
-                'UPDATE ingredients SET stock_quantity = ?, reset_timer_days = ?, last_reset_at = CURRENT_TIMESTAMP, synced = 0 WHERE id = ?',
-                newStock, timerOption, editingItem.id
+                'UPDATE ingredients SET stock_quantity = ?, reset_timer_days = ?, last_reset_at = ?, synced = 0 WHERE id = ?',
+                newStock, timerOption, new Date().toISOString(), editingItem.id
             );
             closeModal();
             loadIngredients();

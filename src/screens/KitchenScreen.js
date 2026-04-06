@@ -15,6 +15,10 @@ export default function KitchenScreen() {
     const [confirmVisible, setConfirmVisible] = useState(false);
     const [pendingOrderId, setPendingOrderId] = useState(null);
 
+    // Cancel modal
+    const [cancelVisible, setCancelVisible] = useState(false);
+    const [orderToCancel, setOrderToCancel] = useState(null);
+
     // History modal
     const [historyVisible, setHistoryVisible] = useState(false);
     const [historyOrders, setHistoryOrders] = useState([]);
@@ -108,6 +112,49 @@ export default function KitchenScreen() {
         setPendingOrderId(null);
     };
 
+    // Step 1: Request Cancel
+    const requestCancel = (order) => {
+        setOrderToCancel(order);
+        setCancelVisible(true);
+    };
+
+    // Step 2: Confirm Cancel & Rollback Inventory
+    const confirmCancel = async () => {
+        setCancelVisible(false);
+        try {
+            const db = await getDBConnection();
+
+            // Rollback inventory for each item
+            for (let item of orderToCancel.items) {
+                let recs;
+                if (item.variant_id) {
+                    recs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id = ? AND deleted_at IS NULL', item.product_id, item.variant_id);
+                } else {
+                    recs = await db.getAllAsync('SELECT * FROM recipes WHERE product_id = ? AND variant_id IS NULL AND deleted_at IS NULL', item.product_id);
+                }
+                for (let r of recs) {
+                    const totalUsed = r.quantity * item.quantity;
+                    await db.runAsync(
+                        'UPDATE ingredients SET stock_quantity = stock_quantity + ?, synced = 0 WHERE id = ?',
+                        totalUsed, r.ingredient_id
+                    );
+                }
+            }
+
+            // Mark order as cancelled
+            await db.runAsync('UPDATE orders SET status = ?, synced = 0 WHERE id = ?', 'Cancelled', orderToCancel.id);
+            loadPendingOrders();
+        } catch (e) {
+            console.error("Failed to cancel order and rollback stock", e);
+        }
+        setOrderToCancel(null);
+    };
+
+    const abortCancel = () => {
+        setCancelVisible(false);
+        setOrderToCancel(null);
+    };
+
     const loadHistory = async () => {
         try {
             const db = await getDBConnection();
@@ -180,9 +227,9 @@ export default function KitchenScreen() {
             {orders.length === 0 ? (
                 <Text style={{ fontSize: 18, color: '#6b7280', marginTop: 50 }}>No pending orders in the queue.</Text>
             ) : (
-                <ScrollView 
-                    horizontal={true} 
-                    showsHorizontalScrollIndicator={true} 
+                <ScrollView
+                    horizontal={true}
+                    showsHorizontalScrollIndicator={true}
                     contentContainerStyle={styles.ordersGrid}
                 >
                     {orders.map(item => (
@@ -191,17 +238,20 @@ export default function KitchenScreen() {
                                 <View style={{ flex: 1 }}>
                                     <Text style={styles.orderNumber}>{orderLabel(item)}</Text>
                                 </View>
-                                <View style={{ alignItems: 'flex-end' }}>
+                                <View style={{ alignItems: 'flex-end', marginRight: 10 }}>
                                     <Text style={styles.timeLabel}>Time Elapsed</Text>
                                     <Text style={styles.timeValue}>{formatElapsedTime(item.created_at)}</Text>
                                 </View>
+                                <TouchableOpacity onPress={() => requestCancel(item)} style={{ paddingLeft: 10 }}>
+                                    <X color="#ef4444" size={24} />
+                                </TouchableOpacity>
                             </View>
 
                             {/* Order Type Pill */}
                             <View style={{ marginBottom: 15, flexDirection: 'row' }}>
                                 <View style={[styles.orderTypeBadge, { backgroundColor: item.order_type === 'Take Out' ? '#dbeafe' : '#dcfce7' }]}>
                                     <Text style={[styles.orderTypeBadgeText, { color: item.order_type === 'Take Out' ? '#1d4ed8' : '#166534' }]}>
-                                        {item.order_type === 'Take Out' ? '🥡 Take Out' : '🍽️ Dine In'}
+                                        {item.order_type === 'Take Out' ? 'Take Out' : 'Dine In'}
                                     </Text>
                                 </View>
                             </View>
@@ -244,6 +294,26 @@ export default function KitchenScreen() {
                             </TouchableOpacity>
                             <TouchableOpacity style={styles.doneBtn} onPress={confirmComplete}>
                                 <Text style={styles.doneBtnText}>Yes, Complete</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* ─── Cancel Modal ─── */}
+            <Modal visible={cancelVisible} transparent animationType="fade">
+                <View style={styles.modalOverlay}>
+                    <View style={styles.confirmModal}>
+                        <Text style={[styles.confirmTitle, { color: '#ef4444' }]}>Cancel Order?</Text>
+                        <Text style={styles.confirmBody}>
+                            Are you sure you want to delete this order? Inventory will be rolled back automatically.
+                        </Text>
+                        <View style={styles.confirmActions}>
+                            <TouchableOpacity style={styles.cancelBtn} onPress={abortCancel}>
+                                <Text style={styles.cancelBtnText}>Keep Order</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={[styles.doneBtn, { backgroundColor: '#ef4444' }]} onPress={confirmCancel}>
+                                <Text style={styles.doneBtnText}>Yes, Cancel</Text>
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -316,7 +386,7 @@ const styles = StyleSheet.create({
         borderColor: '#bae6fd',
     },
     historyBtnText: { color: '#0369a1', fontWeight: 'bold', fontSize: 15 },
-    
+
     ordersGrid: {
         flexDirection: 'row',
         alignItems: 'flex-start',
