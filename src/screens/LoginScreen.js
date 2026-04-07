@@ -6,7 +6,9 @@ import {
 import { LogIn, ChevronLeft, Shield, Briefcase, UserCheck, User } from 'lucide-react-native';
 import { getDBConnection } from '../lib/database';
 import { useAuth } from '../context/AuthContext';
+import { fetchUsersFromSupabase } from '../lib/syncService';
 import GelosLogo from '../../assets/GelosLogo.png';
+import { Alert, TextInput } from 'react-native';
 
 const { width, height } = Dimensions.get('window');
 
@@ -63,8 +65,8 @@ function UserCard({ user, onSelect, selected }) {
     );
 }
 
-function PinPad({ onSubmit, onBack, selectedUser, loading, error }) {
-    const [pin, setPin] = useState('');
+function PasswordPad({ onSubmit, onBack, selectedUser, loading, error }) {
+    const [password, setPassword] = useState('');
     const shakeAnim = useRef(new Animated.Value(0)).current;
     const slideAnim = useRef(new Animated.Value(40)).current;
     const opacityAnim = useRef(new Animated.Value(0)).current;
@@ -78,7 +80,7 @@ function PinPad({ onSubmit, onBack, selectedUser, loading, error }) {
 
     useEffect(() => {
         if (error) {
-            setPin('');
+            setPassword('');
             Animated.sequence([
                 Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
                 Animated.timing(shakeAnim, { toValue: -10, duration: 50, useNativeDriver: true }),
@@ -88,17 +90,8 @@ function PinPad({ onSubmit, onBack, selectedUser, loading, error }) {
         }
     }, [error]);
 
-    const handleDigit = (d) => {
-        if (pin.length < 4) {
-            const newPin = pin + d;
-            setPin(newPin);
-        }
-    };
-
-    const handleDelete = () => setPin(p => p.slice(0, -1));
-
     const handleSubmit = () => {
-        if (pin.length > 0) onSubmit(pin);
+        if (password.length > 0) onSubmit(password);
     };
 
     const roleColor = ROLE_COLORS[selectedUser.role] || ROLE_COLORS.staff;
@@ -118,37 +111,23 @@ function PinPad({ onSubmit, onBack, selectedUser, loading, error }) {
                 <RoleIcon color={roleColor.text} size={32} />
             </View>
             <Text style={styles.pinUserName}>{selectedUser.username}</Text>
-            <Text style={styles.pinPrompt}>Enter PIN</Text>
+            <Text style={styles.pinPrompt}>Enter Password</Text>
 
-            {/* Dots */}
-            <View style={styles.dotsRow}>
-                {Array.from({ length: Math.max(pin.length, 4) }).map((_, i) => (
-                    <View key={i} style={[styles.dot, i < pin.length && styles.dotFilled]} />
-                ))}
-            </View>
+            <TextInput
+                style={styles.passwordInput}
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+                autoFocus
+                placeholder="Password"
+                placeholderTextColor="rgba(255,255,255,0.3)"
+                onSubmitEditing={handleSubmit}
+            />
 
             {error ? <Text style={styles.pinError}>{error}</Text> : null}
 
-            {/* Numpad */}
-            <View style={styles.numpad}>
-                {[['1', '2', '3'], ['4', '5', '6'], ['7', '8', '9'], ['', '0', '⌫']].map((row, ri) => (
-                    <View key={ri} style={styles.numpadRow}>
-                        {row.map((d, di) => (
-                            <TouchableOpacity
-                                key={di}
-                                style={[styles.numpadKey, d === '' && styles.numpadKeyEmpty]}
-                                onPress={() => d === '⌫' ? handleDelete() : d !== '' ? handleDigit(d) : null}
-                                activeOpacity={d === '' ? 1 : 0.7}
-                            >
-                                <Text style={styles.numpadKeyText}>{d}</Text>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
-                ))}
-            </View>
-
             <TouchableOpacity
-                style={[styles.loginBtn, { backgroundColor: roleColor.border }, loading && { opacity: 0.7 }]}
+                style={[styles.loginBtn, { backgroundColor: roleColor.border, marginTop: 10 }, loading && { opacity: 0.7 }]}
                 onPress={handleSubmit}
                 disabled={loading}
             >
@@ -179,8 +158,13 @@ export default function LoginScreen() {
 
     const loadUsers = async () => {
         try {
+            await fetchUsersFromSupabase();
             const db = await getDBConnection();
             const rows = await db.getAllAsync('SELECT * FROM users ORDER BY id ASC');
+            
+            if (rows.length === 0) {
+                Alert.alert("First Install", "No users found. Ensure you have an internet connection to fetch users from the database.");
+            }
             setUsers(rows);
         } catch (e) {
             console.error('Failed to load users:', e);
@@ -192,9 +176,9 @@ export default function LoginScreen() {
         setLoginError('');
     };
 
-    const handlePinSubmit = async (pin) => {
+    const handlePasswordSubmit = async (password) => {
         setIsLoading(true);
-        const result = await login(selectedUser.id, pin);
+        const result = await login(selectedUser.id, password);
         setIsLoading(false);
         if (!result.success) {
             setLoginError(result.error);
@@ -246,9 +230,9 @@ export default function LoginScreen() {
                         <Text style={styles.footer}>© 2026 GeloPOS · All rights reserved</Text>
                     </View>
                 ) : (
-                    <PinPad
+                    <PasswordPad
                         selectedUser={selectedUser}
-                        onSubmit={handlePinSubmit}
+                        onSubmit={handlePasswordSubmit}
                         onBack={handleBack}
                         loading={isLoading}
                         error={loginError}
@@ -446,26 +430,21 @@ const styles = StyleSheet.create({
     pinPrompt: {
         fontSize: 13,
         color: 'rgba(255,255,255,0.4)',
-        marginBottom: 24,
+        marginBottom: 16,
         letterSpacing: 2,
         textTransform: 'uppercase',
     },
-    dotsRow: {
-        flexDirection: 'row',
-        gap: 14,
-        marginBottom: 10,
-    },
-    dot: {
-        width: 14,
-        height: 14,
-        borderRadius: 7,
-        borderWidth: 1.5,
-        borderColor: 'rgba(255,255,255,0.3)',
-        backgroundColor: 'transparent',
-    },
-    dotFilled: {
-        backgroundColor: '#60a5fa',
-        borderColor: '#60a5fa',
+    passwordInput: {
+        width: '100%',
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+        borderRadius: 14,
+        padding: 16,
+        color: '#fff',
+        fontSize: 18,
+        textAlign: 'center',
+        marginBottom: 16,
     },
     pinError: {
         color: '#f87171',
@@ -473,34 +452,7 @@ const styles = StyleSheet.create({
         marginBottom: 12,
         textAlign: 'center',
     },
-    numpad: {
-        marginTop: 14,
-        marginBottom: 24,
-        gap: 12,
-    },
-    numpadRow: {
-        flexDirection: 'row',
-        gap: 16,
-    },
-    numpadKey: {
-        width: 72,
-        height: 56,
-        borderRadius: 14,
-        backgroundColor: 'rgba(255,255,255,0.08)',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    numpadKeyEmpty: {
-        backgroundColor: 'transparent',
-        borderColor: 'transparent',
-    },
-    numpadKeyText: {
-        color: '#fff',
-        fontSize: 22,
-        fontWeight: '600',
-    },
+
     loginBtn: {
         flexDirection: 'row',
         alignItems: 'center',

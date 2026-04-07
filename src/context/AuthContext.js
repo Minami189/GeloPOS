@@ -6,12 +6,12 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
     const [currentUser, setCurrentUser] = useState(null); // null = not logged in
 
-    const login = useCallback(async (userId, pin) => {
+    const login = useCallback(async (userId, password) => {
         try {
             const db = await getDBConnection();
             const user = await db.getFirstAsync(
-                'SELECT * FROM users WHERE id = ? AND pin = ?',
-                [userId, pin]
+                'SELECT * FROM users WHERE id = ? AND password = ?',
+                [userId, password]
             );
             if (user) {
                 setCurrentUser({
@@ -30,7 +30,7 @@ export function AuthProvider({ children }) {
                 });
                 return { success: true };
             } else {
-                return { success: false, error: 'Incorrect PIN. Please try again.' };
+                return { success: false, error: 'Incorrect Password. Please try again.' };
             }
         } catch (e) {
             console.error('Login error:', e);

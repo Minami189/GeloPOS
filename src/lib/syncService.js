@@ -570,3 +570,72 @@ export const deleteRecordFromSupabase = async (table, id) => {
         return { success: false, error: error.message };
     }
 };
+
+export const fetchUsersFromSupabase = async () => {
+    try {
+        const { data: usersData, error } = await supabase.from('pos_users').select('*');
+        if (error) throw error;
+        if (!usersData || usersData.length === 0) return { success: true, count: 0 };
+
+        const db = await getDBConnection();
+        await db.withTransactionAsync(async () => {
+            await db.runAsync('DELETE FROM users');
+            for (const user of usersData) {
+                await db.runAsync(
+                    `INSERT INTO users (id, username, password, role, can_access_pos, can_access_kitchen, can_access_admin, can_access_analytics, can_access_settings, can_access_inventory, avatar_emoji)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    user.id, user.username, user.password, user.role,
+                    user.can_access_pos ? 1 : 0, user.can_access_kitchen ? 1 : 0,
+                    user.can_access_admin ? 1 : 0, user.can_access_analytics ? 1 : 0,
+                    user.can_access_settings ? 1 : 0, user.can_access_inventory ? 1 : 0,
+                    user.avatar_emoji || '👤'
+                );
+            }
+        });
+        return { success: true, count: usersData.length };
+    } catch (error) {
+        console.error('Fetch users from Supabase failed:', error);
+        return { success: false, error: error.message };
+    }
+};
+
+export const syncUsersToSupabase = async () => {
+    try {
+        const db = await getDBConnection();
+        const localUsers = await db.getAllAsync('SELECT * FROM users');
+        
+        const payload = localUsers.map(u => ({
+            id: u.id,
+            username: u.username,
+            password: u.password,
+            role: u.role,
+            can_access_pos: !!u.can_access_pos,
+            can_access_kitchen: !!u.can_access_kitchen,
+            can_access_admin: !!u.can_access_admin,
+            can_access_analytics: !!u.can_access_analytics,
+            can_access_settings: !!u.can_access_settings,
+            can_access_inventory: !!u.can_access_inventory,
+            avatar_emoji: u.avatar_emoji
+        }));
+
+        const { error } = await supabase.from('pos_users').upsert(payload, { onConflict: 'id' });
+        if (error) throw error;
+
+        // Optionally handle deletions if a user was deleted locally:
+        // For a full sync, we could delete users in Supabase that no longer exist locally.
+        const { data: cloudUsers } = await supabase.from('pos_users').select('id');
+        if (cloudUsers) {
+            const localUserIds = new Set(localUsers.map(u => u.id));
+            for (const cu of cloudUsers) {
+                if (!localUserIds.has(cu.id)) {
+                    await supabase.from('pos_users').delete().eq('id', cu.id);
+                }
+            }
+        }
+
+        return { success: true, count: payload.length };
+    } catch (error) {
+        console.error('Sync users to Supabase failed:', error);
+        return { success: false, error: error.message };
+    }
+};

@@ -9,6 +9,7 @@ import {
 } from 'lucide-react-native';
 import { getDBConnection } from '../../lib/database';
 import { useAuth } from '../../context/AuthContext';
+import { fetchUsersFromSupabase, syncUsersToSupabase } from '../../lib/syncService';
 
 const PAGE_PERMISSIONS = [
     { key: 'can_access_pos', label: 'POS', color: '#3b82f6' },
@@ -26,18 +27,17 @@ const AVATAR_OPTIONS = ['💻', '👤', '📠', '🥄', '🧑‍🔧', '⭐'];
 
 function PasswordChangeCard({ title, icon: Icon, color, onSave }) {
     const [current, setCurrent] = useState('');
-    const [newPin, setNewPin] = useState('');
+    const [newPassword, setNewPassword] = useState('');
     const [confirm, setConfirm] = useState('');
     const [loading, setLoading] = useState(false);
 
     const handleSave = async () => {
-        if (!newPin) { Alert.alert('Error', 'New PIN cannot be empty.'); return; }
-        if (newPin.length !== 4) { Alert.alert('Error', 'PIN must be exactly 4 digits.'); return; }
-        if (newPin !== confirm) { Alert.alert('Error', 'New PIN and confirmation do not match.'); return; }
+        if (!newPassword) { Alert.alert('Error', 'New Password cannot be empty.'); return; }
+        if (newPassword !== confirm) { Alert.alert('Error', 'New Password and confirmation do not match.'); return; }
         setLoading(true);
-        await onSave(current, newPin);
+        await onSave(current, newPassword);
         setLoading(false);
-        setCurrent(''); setNewPin(''); setConfirm('');
+        setCurrent(''); setNewPassword(''); setConfirm('');
     };
 
     return (
@@ -52,41 +52,38 @@ function PasswordChangeCard({ title, icon: Icon, color, onSave }) {
                 style={pc.input}
                 value={current}
                 onChangeText={setCurrent}
-                placeholder="Current PIN"
+                placeholder="Current Password"
                 placeholderTextColor="#9ca3af"
                 secureTextEntry
-                keyboardType="numeric"
-                maxLength={4}
+                autoCapitalize="none"
             />
             <TextInput
                 style={pc.input}
-                value={newPin}
-                onChangeText={setNewPin}
-                placeholder="New PIN"
+                value={newPassword}
+                onChangeText={setNewPassword}
+                placeholder="New Password"
                 placeholderTextColor="#9ca3af"
                 secureTextEntry
-                keyboardType="numeric"
-                maxLength={4}
+                autoCapitalize="none"
             />
             <TextInput
                 style={pc.input}
                 value={confirm}
                 onChangeText={setConfirm}
-                placeholder="Confirm New PIN"
+                placeholder="Confirm New Password"
                 placeholderTextColor="#9ca3af"
                 secureTextEntry
-                keyboardType="numeric"
-                maxLength={8}
+                autoCapitalize="none"
             />
             <TouchableOpacity style={[pc.saveBtn, { backgroundColor: color }]} onPress={handleSave} disabled={loading}>
                 {loading ? <ActivityIndicator size="small" color="#fff" /> : <Check color="#fff" size={16} />}
-                <Text style={pc.saveBtnText}>Update PIN</Text>
+                <Text style={pc.saveBtnText}>Update Password</Text>
             </TouchableOpacity>
         </View>
     );
 }
 
-function UserCard({ user, onDelete, onUpdatePermissions, onUpdatePin, isCurrentUser, isLastAdmin }) {
+function UserCard({ user, onDelete, onUpdatePermissions, isCurrentUser, isLastAdmin }) {
     const [editing, setEditing] = useState(false);
     const [perms, setPerms] = useState({
         can_access_pos: !!user.can_access_pos,
@@ -97,19 +94,15 @@ function UserCard({ user, onDelete, onUpdatePermissions, onUpdatePin, isCurrentU
         can_access_inventory: !!user.can_access_inventory,
     });
     const [avatar, setAvatar] = useState(user.avatar_emoji || '👤');
-    const [newPin, setNewPin] = useState('');
+    const [newPassword, setNewPassword] = useState('');
     const [saving, setSaving] = useState(false);
 
     const handleSave = async () => {
-        if (newPin && newPin.length !== 4) {
-            Alert.alert('Error', 'PIN must be exactly 4 digits.');
-            return;
-        }
         setSaving(true);
-        await onUpdatePermissions(user.id, perms, newPin || null, avatar);
+        await onUpdatePermissions(user.id, perms, newPassword || null, avatar);
         setSaving(false);
         setEditing(false);
-        setNewPin('');
+        setNewPassword('');
     };
 
     const isAdmin = user.role === 'admin';
@@ -178,21 +171,20 @@ function UserCard({ user, onDelete, onUpdatePermissions, onUpdatePin, isCurrentU
                         ))}
                     </View>
 
-                    {/* Change PIN for this user */}
-                    <Text style={[uc.editorLabel, { marginTop: 12 }]}>Change PIN</Text>
+                    {/* Change Password for this user */}
+                    <Text style={[uc.editorLabel, { marginTop: 12 }]}>Change Password</Text>
                     <TextInput
                         style={uc.pinInput}
-                        value={newPin}
-                        onChangeText={setNewPin}
-                        placeholder="New PIN (leave blank to keep)"
+                        value={newPassword}
+                        onChangeText={setNewPassword}
+                        placeholder="New Password (leave blank to keep)"
                         placeholderTextColor="#9ca3af"
                         secureTextEntry
-                        keyboardType="numeric"
-                        maxLength={4}
+                        autoCapitalize="none"
                     />
 
                     <View style={uc.editorBtns}>
-                        <TouchableOpacity style={uc.cancelBtn} onPress={() => { setEditing(false); setNewPin(''); setAvatar(user.avatar_emoji || '👤'); }}>
+                        <TouchableOpacity style={uc.cancelBtn} onPress={() => { setEditing(false); setNewPassword(''); setAvatar(user.avatar_emoji || '👤'); }}>
                             <X color="#6b7280" size={16} />
                             <Text style={uc.cancelBtnText}>Cancel</Text>
                         </TouchableOpacity>
@@ -209,7 +201,7 @@ function UserCard({ user, onDelete, onUpdatePermissions, onUpdatePin, isCurrentU
 
 function AddUserModal({ onAdd, onClose }) {
     const [username, setUsername] = useState('');
-    const [pin, setPin] = useState('');
+    const [password, setPassword] = useState('');
     const [role, setRole] = useState('cashier');
     const [avatar, setAvatar] = useState('👤');
     const [perms, setPerms] = useState({
@@ -224,10 +216,9 @@ function AddUserModal({ onAdd, onClose }) {
 
     const handleAdd = async () => {
         if (!username.trim()) { Alert.alert('Error', 'Username is required.'); return; }
-        if (!pin) { Alert.alert('Error', 'PIN is required.'); return; }
-        if (pin.length !== 4) { Alert.alert('Error', 'PIN must be exactly 4 digits.'); return; }
+        if (!password) { Alert.alert('Error', 'Password is required.'); return; }
         setLoading(true);
-        await onAdd({ username: username.trim(), pin, role, avatar, perms });
+        await onAdd({ username: username.trim(), password, role, avatar, perms });
         setLoading(false);
     };
 
@@ -255,8 +246,8 @@ function AddUserModal({ onAdd, onClose }) {
                 <Text style={am.label}>Username</Text>
                 <TextInput style={am.input} value={username} onChangeText={setUsername} placeholder="e.g. Staff 1" placeholderTextColor="#9ca3af" />
 
-                <Text style={am.label}>PIN</Text>
-                <TextInput style={am.input} value={pin} onChangeText={setPin} keyboardType="numeric" secureTextEntry maxLength={4} placeholder="e.g. 1234" placeholderTextColor="#9ca3af" />
+                <Text style={am.label}>Password</Text>
+                <TextInput style={am.input} value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" placeholder="e.g. Secret123" placeholderTextColor="#9ca3af" />
 
                 <Text style={am.label}>Role</Text>
                 <View style={am.roleRow}>
@@ -311,7 +302,8 @@ export default function AccessTab() {
     const { currentUser, refreshCurrentUser } = useAuth();
     const [users, setUsers] = useState([]);
     const [showAddModal, setShowAddModal] = useState(false);
-    const [loading, setLoading] = useState(false);
+    const [isOffline, setIsOffline] = useState(false);
+    const [isFetching, setIsFetching] = useState(true);
 
     useFocusEffect(
         useCallback(() => {
@@ -320,22 +312,31 @@ export default function AccessTab() {
     );
 
     const loadUsers = async () => {
-        const db = await getDBConnection();
-        const rows = await db.getAllAsync('SELECT * FROM users ORDER BY id ASC');
-        setUsers(rows);
+        setIsFetching(true);
+        const syncRes = await fetchUsersFromSupabase();
+        if (!syncRes.success && String(syncRes.error).includes('Network')) {
+            setIsOffline(true);
+        } else {
+            setIsOffline(false);
+            const db = await getDBConnection();
+            const rows = await db.getAllAsync('SELECT * FROM users ORDER BY id ASC');
+            setUsers(rows);
+        }
+        setIsFetching(false);
     };
 
     const adminCount = users.filter(u => u.role === 'admin').length;
 
-    const handleChangeAdminPin = async (currentPin, newPin) => {
+    const handleChangeAdminPassword = async (currentPassword, newPassword) => {
         const db = await getDBConnection();
         const adminUser = users.find(u => u.role === 'admin' && u.id === currentUser.id);
-        if (!adminUser || adminUser.pin !== currentPin) {
-            Alert.alert('Error', 'Current PIN is incorrect.');
+        if (!adminUser || adminUser.password !== currentPassword) {
+            Alert.alert('Error', 'Current password is incorrect.');
             return;
         }
-        await db.runAsync('UPDATE users SET pin = ? WHERE id = ?', [newPin, adminUser.id]);
-        Alert.alert('Success', 'Admin PIN updated.');
+        await db.runAsync('UPDATE users SET password = ? WHERE id = ?', [newPassword, adminUser.id]);
+        await syncUsersToSupabase();
+        Alert.alert('Success', 'Admin password updated.');
         loadUsers();
         refreshCurrentUser();
     };
@@ -350,6 +351,7 @@ export default function AccessTab() {
                     text: 'Delete', style: 'destructive', onPress: async () => {
                         const db = await getDBConnection();
                         await db.runAsync('DELETE FROM users WHERE id = ?', [user.id]);
+                        await syncUsersToSupabase();
                         loadUsers();
                     }
                 }
@@ -357,12 +359,12 @@ export default function AccessTab() {
         );
     };
 
-    const handleUpdatePermissions = async (userId, perms, newPin, avatar) => {
+    const handleUpdatePermissions = async (userId, perms, newPassword, avatar) => {
         const db = await getDBConnection();
-        if (newPin) {
+        if (newPassword) {
             await db.runAsync(
-                `UPDATE users SET can_access_pos=?, can_access_kitchen=?, can_access_admin=?, can_access_analytics=?, can_access_settings=?, can_access_inventory=?, pin=?, avatar_emoji=? WHERE id=?`,
-                [perms.can_access_pos ? 1 : 0, perms.can_access_kitchen ? 1 : 0, perms.can_access_admin ? 1 : 0, perms.can_access_analytics ? 1 : 0, perms.can_access_settings ? 1 : 0, perms.can_access_inventory ? 1 : 0, newPin, avatar, userId]
+                `UPDATE users SET can_access_pos=?, can_access_kitchen=?, can_access_admin=?, can_access_analytics=?, can_access_settings=?, can_access_inventory=?, password=?, avatar_emoji=? WHERE id=?`,
+                [perms.can_access_pos ? 1 : 0, perms.can_access_kitchen ? 1 : 0, perms.can_access_admin ? 1 : 0, perms.can_access_analytics ? 1 : 0, perms.can_access_settings ? 1 : 0, perms.can_access_inventory ? 1 : 0, newPassword, avatar, userId]
             );
         } else {
             await db.runAsync(
@@ -370,12 +372,13 @@ export default function AccessTab() {
                 [perms.can_access_pos ? 1 : 0, perms.can_access_kitchen ? 1 : 0, perms.can_access_admin ? 1 : 0, perms.can_access_analytics ? 1 : 0, perms.can_access_settings ? 1 : 0, perms.can_access_inventory ? 1 : 0, avatar, userId]
             );
         }
+        await syncUsersToSupabase();
         Alert.alert('Saved', 'User profile updated.');
         loadUsers();
         if (userId === currentUser?.id) refreshCurrentUser();
     };
 
-    const handleAddUser = async ({ username, pin, role, avatar, perms }) => {
+    const handleAddUser = async ({ username, password, role, avatar, perms }) => {
         try {
             const db = await getDBConnection();
             const adminPerms = role === 'admin' ? [1, 1, 1, 1, 1, 1] : [
@@ -387,10 +390,11 @@ export default function AccessTab() {
                 perms.can_access_inventory ? 1 : 0,
             ];
             await db.runAsync(
-                `INSERT INTO users (username, pin, role, can_access_pos, can_access_kitchen, can_access_admin, can_access_analytics, can_access_settings, can_access_inventory, avatar_emoji)
+                `INSERT INTO users (username, password, role, can_access_pos, can_access_kitchen, can_access_admin, can_access_analytics, can_access_settings, can_access_inventory, avatar_emoji)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [username, pin, role, ...adminPerms, avatar]
+                [username, password, role, ...adminPerms, avatar]
             );
+            await syncUsersToSupabase();
             Alert.alert('Success', `${username} has been added.`);
             setShowAddModal(false);
             loadUsers();
@@ -403,19 +407,43 @@ export default function AccessTab() {
         }
     };
 
+    if (isFetching) {
+        return (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                <ActivityIndicator size="large" color="#3b82f6" />
+                <Text style={{ marginTop: 12, color: '#6b7280' }}>Verifying Connection & Permissions...</Text>
+            </View>
+        );
+    }
+
+    if (isOffline) {
+        return (
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 40 }}>
+                <Shield color="#ef4444" size={48} />
+                <Text style={{ fontSize: 18, color: '#ef4444', fontWeight: '700' }}>Internet Required</Text>
+                <Text style={{ textAlign: 'center', color: '#6b7280', marginHorizontal: 30 }}>
+                    You must be connected to the internet to change access settings and passwords in order to keep the system correctly synchronized.
+                </Text>
+                <TouchableOpacity onPress={loadUsers} style={s.refreshBtn}>
+                    <Text style={s.refreshBtnText}>Try Again</Text>
+                </TouchableOpacity>
+            </View>
+        );
+    }
+
     return (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
 
-            {/* Change Admin PIN */}
+            {/* Change Admin Password */}
             <View style={s.sectionHeader}>
                 <Lock color="#ef4444" size={20} />
                 <Text style={s.sectionTitle}>Security</Text>
             </View>
             <PasswordChangeCard
-                title="Change Your PIN"
+                title="Change Your Password"
                 icon={Lock}
                 color="#ef4444"
-                onSave={handleChangeAdminPin}
+                onSave={handleChangeAdminPassword}
             />
 
             {/* Users section */}
@@ -465,6 +493,8 @@ const s = StyleSheet.create({
     addUserText: { color: '#3b82f6', fontWeight: '700', fontSize: 15 },
     maxUsersNote: { padding: 16, backgroundColor: '#fef9c3', borderRadius: 12, alignItems: 'center', marginTop: 12 },
     maxUsersText: { color: '#92400e', fontWeight: '600' },
+    refreshBtn: { marginTop: 12, paddingVertical: 10, paddingHorizontal: 20, backgroundColor: '#f3f4f6', borderRadius: 10 },
+    refreshBtnText: { color: '#3b82f6', fontWeight: '700' }
 });
 
 const pc = StyleSheet.create({

@@ -116,7 +116,7 @@ export const initDB = async () => {
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT NOT NULL UNIQUE,
-                pin TEXT NOT NULL,
+                password TEXT NOT NULL,
                 role TEXT DEFAULT 'staff',
                 can_access_pos INTEGER DEFAULT 1,
                 can_access_kitchen INTEGER DEFAULT 1,
@@ -292,9 +292,9 @@ export const initDB = async () => {
             const userCount = await db.getFirstAsync('SELECT COUNT(*) as cnt FROM users');
             if (!userCount || userCount.cnt === 0) {
                 await db.execAsync(`
-                    INSERT INTO users (username, pin, role, can_access_pos, can_access_kitchen, can_access_admin, can_access_analytics, can_access_settings, can_access_inventory, avatar_emoji)
+                    INSERT INTO users (username, password, role, can_access_pos, can_access_kitchen, can_access_admin, can_access_analytics, can_access_settings, can_access_inventory, avatar_emoji)
                     VALUES ('Admin', '1234', 'admin', 1, 1, 1, 1, 1, 1, '👑');
-                    INSERT INTO users (username, pin, role, can_access_pos, can_access_kitchen, can_access_admin, can_access_analytics, can_access_settings, can_access_inventory, avatar_emoji)
+                    INSERT INTO users (username, password, role, can_access_pos, can_access_kitchen, can_access_admin, can_access_analytics, can_access_settings, can_access_inventory, avatar_emoji)
                     VALUES ('Cashier', '5678', 'cashier', 1, 1, 0, 1, 0, 0, '🧑‍💼');
                 `);
                 console.log('Seeded default Admin and Cashier users.');
@@ -309,7 +309,7 @@ export const initDB = async () => {
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     username TEXT NOT NULL UNIQUE,
-                    pin TEXT NOT NULL,
+                    password TEXT NOT NULL,
                     role TEXT DEFAULT 'staff',
                     can_access_pos INTEGER DEFAULT 1,
                     can_access_kitchen INTEGER DEFAULT 1,
@@ -337,6 +337,18 @@ export const initDB = async () => {
         } catch (err) {
             console.error('Migration error for users table:', err);
         }
+
+            try {
+                const usersInfo = await db.getAllAsync(`PRAGMA table_info(users)`);
+                const hasPinColumn = usersInfo.some(col => col.name === 'pin');
+                const hasPasswordColumn = usersInfo.some(col => col.name === 'password');
+                if (hasPinColumn && !hasPasswordColumn) {
+                    await db.execAsync(`ALTER TABLE users RENAME COLUMN pin TO password;`);
+                    console.log("Renamed 'pin' column to 'password' in users table");
+                }
+            } catch (err) {
+                console.error('Migration error for users password column:', err);
+            }
 
         console.log("Database initialized successfully.");
     } catch (e) {
