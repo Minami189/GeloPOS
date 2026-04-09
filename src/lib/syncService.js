@@ -591,6 +591,27 @@ export const checkDeviceLock = async (deviceId) => {
                 return { isLocked: true, lockedUntil, remainingMinutes: Math.ceil((lockedUntil - now) / 60000) };
             }
         }
+
+        // 2. Check cloud lock as a fallback (Wipe resistance)
+        const { data, error } = await supabase
+            .from('device_locks')
+            .select('*')
+            .eq('device_id', deviceId)
+            .single();
+
+        if (error || !data) return { isLocked: false };
+
+        if (data.locked_until) {
+            const lockedUntil = new Date(data.locked_until);
+            const now = new Date();
+            if (now < lockedUntil) {
+                // Device is locked in the cloud, sync it locally to restore the lock
+                await updateSetting('device_locked_until', data.locked_until);
+                await updateSetting('failed_login_attempts', data.failed_attempts.toString());
+                return { isLocked: true, lockedUntil, remainingMinutes: Math.ceil((lockedUntil - now) / 60000) };
+            }
+        }
+        
         return { isLocked: false };
     } catch (err) {
         console.error('Error checking device lock:', err);
@@ -618,6 +639,19 @@ export const reportFailedAttempt = async (deviceId) => {
             await updateSetting('device_locked_until', lockedUntil);
         }
 
+        // 2. Fire-and-forget sync to Cloud (Wipe resistance)
+        supabase
+            .from('device_locks')
+            .upsert({
+                device_id: deviceId,
+                failed_attempts: attempts,
+                lock_duration_minutes: durationMinutes,
+                locked_until: lockedUntil
+            })
+            .then(({ error }) => {
+                if (error) console.warn("Cloud sync error: ", error.message);
+            });
+
         return { success: true, lockedUntil, attemptsLeft: Math.max(0, 5 - attempts) };
     } catch (err) {
         console.error('Error reporting failed attempt:', err);
@@ -628,6 +662,19 @@ export const clearDeviceLock = async (deviceId) => {
     try {
         await updateSetting('failed_login_attempts', '0');
         await updateSetting('device_locked_until', '');
+
+        // Fire-and-forget sync to Cloud
+        supabase
+            .from('device_locks')
+            .upsert({
+                device_id: deviceId,
+                failed_attempts: 0,
+                lock_duration_minutes: 30,
+                locked_until: null
+            })
+            .then(({ error }) => {
+                if (error) console.warn("Cloud clear error: ", error.message);
+            });
     } catch (err) {
         console.error('Error clearing device lock:', err);
     }
