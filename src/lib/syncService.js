@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { getDBConnection, getDeviceId } from './database';
+import { getDBConnection, getDeviceId, updateSetting, getSetting } from './database';
 import * as FileSystem from 'expo-file-system';
 import { decode } from 'base64-arraybuffer';
 
@@ -317,6 +317,12 @@ export const syncAllToSupabase = async () => {
         const ordersResult = await syncOrdersToSupabase();
         if (!ordersResult.success) return ordersResult;
 
+        // Sync users to ensure passwords and permissions stay fresh on all devices
+        const usersResult = await fetchUsersFromSupabase();
+        if (!usersResult.success) {
+            console.warn('User sync failed during global sync:', usersResult.error);
+        }
+
         // After pushing local changes up, pull the latest catalog + orders back
         // down from Supabase. This keeps the local DB (and analytics graph) in
         // sync with any data that exists on the server from other devices.
@@ -328,9 +334,10 @@ export const syncAllToSupabase = async () => {
 
         return {
             success: true,
-            message: `Synced ${catalogResult.count} catalog items and ${ordersResult.count} orders. Pulled latest data from cloud.`,
+            message: `Synced ${catalogResult.count} catalog items, ${ordersResult.count} orders, and ${usersResult?.count || 0} users.`,
             catalogCount: catalogResult.count,
-            ordersCount: ordersResult.count
+            ordersCount: ordersResult.count,
+            usersCount: usersResult?.count || 0
         };
     } catch (error) {
         return { success: false, error: error.message };
@@ -566,10 +573,66 @@ export const deleteRecordFromSupabase = async (table, id) => {
         if (error) throw error;
         return { success: true };
     } catch (error) {
-        console.error(`Failed to delete from ${table}:`, error);
+        console.error('Failed to sync discounts from local DB:', error);
         return { success: false, error: error.message };
     }
 };
+
+// --- Anti-Brute Force Security ---
+
+export const checkDeviceLock = async (deviceId) => {
+    try {
+        // 1. Check local lock first (Offline support)
+        const localLockedUntilStr = await getSetting('device_locked_until');
+        if (localLockedUntilStr) {
+            const lockedUntil = new Date(localLockedUntilStr);
+            const now = new Date();
+            if (now < lockedUntil) {
+                return { isLocked: true, lockedUntil, remainingMinutes: Math.ceil((lockedUntil - now) / 60000) };
+            }
+        }
+        return { isLocked: false };
+    } catch (err) {
+        console.error('Error checking device lock:', err);
+        return { isLocked: false }; // Fail open if offline/disconnected
+    }
+};
+
+export const reportFailedAttempt = async (deviceId) => {
+    try {
+        let attemptsStr = await getSetting('failed_login_attempts');
+        let attempts = parseInt(attemptsStr) || 0;
+        attempts += 1;
+        
+        await updateSetting('failed_login_attempts', attempts.toString());
+        
+        let durationMinutes = 30; // base duration
+        let lockedUntil = null;
+        
+        if (attempts >= 5) {
+            if (attempts > 5) {
+                // Increase the penalty by 2.5x for subsequent failures after the 5th
+                durationMinutes = Math.min(30 * Math.pow(2.5, attempts - 5), 60 * 24 * 7); // Cap at 1 week
+            }
+            lockedUntil = new Date(new Date().getTime() + durationMinutes * 60000).toISOString();
+            await updateSetting('device_locked_until', lockedUntil);
+        }
+
+        return { success: true, lockedUntil, attemptsLeft: Math.max(0, 5 - attempts) };
+    } catch (err) {
+        console.error('Error reporting failed attempt:', err);
+    }
+};
+
+export const clearDeviceLock = async (deviceId) => {
+    try {
+        await updateSetting('failed_login_attempts', '0');
+        await updateSetting('device_locked_until', '');
+    } catch (err) {
+        console.error('Error clearing device lock:', err);
+    }
+};
+
 
 export const fetchUsersFromSupabase = async () => {
     try {
@@ -592,6 +655,11 @@ export const fetchUsersFromSupabase = async () => {
                 );
             }
         });
+
+        // Track successful activation and sync time
+        await updateSetting('is_activated', 'true');
+        await updateSetting('last_user_sync', new Date().toISOString());
+
         return { success: true, count: usersData.length };
     } catch (error) {
         console.error('Fetch users from Supabase failed:', error);

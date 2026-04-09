@@ -4,11 +4,12 @@ import {
     Animated, Dimensions, ScrollView, Image
 } from 'react-native';
 import { LogIn, ChevronLeft, Shield, Briefcase, UserCheck, User } from 'lucide-react-native';
-import { getDBConnection } from '../lib/database';
+import { getDBConnection, getSetting, getDeviceId } from '../lib/database';
 import { useAuth } from '../context/AuthContext';
-import { fetchUsersFromSupabase } from '../lib/syncService';
+import { fetchUsersFromSupabase, checkDeviceLock, reportFailedAttempt, clearDeviceLock } from '../lib/syncService';
 import GelosLogo from '../../assets/GelosLogo.png';
-import { Alert, TextInput } from 'react-native';
+import { Alert, TextInput, ActivityIndicator as RNActivityIndicator } from 'react-native';
+import { Wifi, AlertTriangle, ShieldCheck } from 'lucide-react-native';
 
 const { width, height } = Dimensions.get('window');
 
@@ -143,6 +144,11 @@ export default function LoginScreen() {
     const [selectedUser, setSelectedUser] = useState(null);
     const [loginError, setLoginError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const [isActivated, setIsActivated] = useState(null); // null = checking, false = needs activation, true = ok
+    const [isStale, setIsStale] = useState(false);
+    const [isActivating, setIsActivating] = useState(false);
+    const [deviceId, setDeviceId] = useState('');
+    const [deviceLock, setDeviceLock] = useState(null); // { isLocked: true, remainingMinutes: X }
     const { login } = useAuth();
 
     const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -158,37 +164,145 @@ export default function LoginScreen() {
 
     const loadUsers = async () => {
         try {
-            await fetchUsersFromSupabase();
-            const db = await getDBConnection();
-            const rows = await db.getAllAsync('SELECT * FROM users ORDER BY id ASC');
+            const activated = await getSetting('is_activated');
+            const lastSyncStr = await getSetting('last_user_sync');
+            const dId = await getDeviceId();
+            setDeviceId(dId);
             
-            if (rows.length === 0) {
-                Alert.alert("First Install", "No users found. Ensure you have an internet connection to fetch users from the database.");
+            if (activated !== 'true') {
+                // Check if we have users anyway (previous installation)
+                const db = await getDBConnection();
+                const rows = await db.getAllAsync('SELECT * FROM users');
+                
+                if (rows.length > 0) {
+                    // Try to silent activate since we are online or have data
+                    setIsActivated(true);
+                    setUsers(rows);
+                    
+                    // Fire-and-forget background sync to get the formal 'activated' flag
+                    fetchUsersFromSupabase().catch(() => {}); 
+                } else {
+                    setIsActivated(false);
+                }
+                return;
             }
-            setUsers(rows);
+
+            setIsActivated(true);
+
+            // Check if device is locked globally
+            const currentLock = await checkDeviceLock(dId);
+            if (currentLock.isLocked) {
+                setDeviceLock(currentLock);
+            }
+
+            // Check if stale (> 24 hours)
+            if (lastSyncStr) {
+                const lastSync = new Date(lastSyncStr);
+                const now = new Date();
+                const diffHours = (now - lastSync) / (1000 * 60 * 60);
+                if (diffHours > 24) {
+                    setIsStale(true);
+                    // Attempt background refresh if online
+                    fetchUsersFromSupabase().then(res => {
+                        if (res.success) {
+                            setIsStale(false);
+                            refreshLocalUsers();
+                        }
+                    });
+                }
+            }
+
+            await refreshLocalUsers();
         } catch (e) {
             console.error('Failed to load users:', e);
+            setIsActivated(true); // Fallback to let them try to log in
         }
     };
 
-    const handleSelectUser = (user) => {
+    const refreshLocalUsers = async () => {
+        const db = await getDBConnection();
+        const rows = await db.getAllAsync('SELECT * FROM users ORDER BY id ASC');
+        setUsers(rows);
+    };
+
+    const handleActivate = async () => {
+        setIsActivating(true);
+        const res = await fetchUsersFromSupabase();
+        setIsActivating(false);
+        if (res.success) {
+            setIsActivated(true);
+            refreshLocalUsers();
+        } else {
+            Alert.alert("Activation Failed", "Could not connect to the cloud. Please check your internet connection and try again.");
+        }
+    };
+
+    const handleSelectUser = async (user) => {
         setSelectedUser(user);
         setLoginError('');
+        
+        // Immediate lock check upon selection
+        const lockStatus = await checkDeviceLock(deviceId);
+        if (lockStatus.isLocked) {
+            setDeviceLock(lockStatus);
+            setSelectedUser(null);
+        }
     };
 
     const handlePasswordSubmit = async (password) => {
+        if (!selectedUser) return;
         setIsLoading(true);
-        const result = await login(selectedUser.id, password);
-        setIsLoading(false);
-        if (!result.success) {
-            setLoginError(result.error);
+        setLoginError('');
+
+        // 1. Verify cloud/local lock status before attempt
+        const lockStatus = await checkDeviceLock(deviceId);
+        if (lockStatus.isLocked) {
+            setDeviceLock(lockStatus);
+            setSelectedUser(null);
+            setIsLoading(false);
+            return;
         }
+
+        // 2. Attempt local login
+        const result = await login(selectedUser.id, password);
+        
+        if (!result.success) {
+            // 3. Login failed - report
+            const failStatus = await reportFailedAttempt(deviceId);
+            
+            if (failStatus && failStatus.lockedUntil) {
+                const lockedUntil = new Date(failStatus.lockedUntil);
+                const remaining = Math.ceil((lockedUntil - new Date()) / 60000);
+                setDeviceLock({ isLocked: true, remainingMinutes: remaining });
+                setSelectedUser(null);
+            } else if (failStatus && typeof failStatus.attemptsLeft === 'number') {
+                // Instantly show the accurate countdown without querying the database again
+                setLoginError(`${result.error} \nWarning: ${failStatus.attemptsLeft} attempt(s) remaining before lock.`);
+            } else {
+                setLoginError(result.error);
+            }
+        } else {
+            // 4. Login success - clear any background fails
+            await clearDeviceLock(deviceId);
+            setDeviceLock(null);
+        }
+        
+        setIsLoading(false);
     };
 
     const handleBack = () => {
         setSelectedUser(null);
         setLoginError('');
     };
+
+    if (isActivated === null) {
+        return (
+            <View style={styles.screen}>
+                <RNActivityIndicator size="large" color="#3b82f6" />
+                <Text style={{ color: 'rgba(255,255,255,0.4)', marginTop: 20, letterSpacing: 1, fontSize: 12 }}>VERIFYING SECURITY STATUS...</Text>
+            </View>
+        );
+    }
 
     return (
         <View style={styles.screen}>
@@ -208,35 +322,77 @@ export default function LoginScreen() {
                     </Animated.View>
                 )}
 
-                {/* User picker or PIN pad */}
-                {!selectedUser ? (
-                    <View style={styles.pickerArea}>
-                        <Text style={styles.pickerLabel}>Select your account</Text>
-                        <ScrollView
-                            horizontal
-                            showsHorizontalScrollIndicator={false}
-                            contentContainerStyle={styles.userList}
+                {!isActivated ? (
+                    <View style={styles.activationBox}>
+                        <Wifi color="#3b82f6" size={48} style={{ marginBottom: 16 }} />
+                        <Text style={styles.activationTitle}>Device Activation Required</Text>
+                        <Text style={styles.activationText}>
+                            This device needs to be connected to the internet to download authorized user accounts for the first time.
+                        </Text>
+                        <TouchableOpacity 
+                            style={[styles.loginBtn, { backgroundColor: '#3b82f6', marginTop: 20 }]} 
+                            onPress={handleActivate}
+                            disabled={isActivating}
                         >
-                            {users.map(u => (
-                                <UserCard
-                                    key={u.id}
-                                    user={u}
-                                    onSelect={handleSelectUser}
-                                    selected={selectedUser?.id === u.id}
-                                />
-                            ))}
-                        </ScrollView>
-                        <View style={styles.divider} />
-                        <Text style={styles.footer}>© 2026 GeloPOS · All rights reserved</Text>
+                            {isActivating ? <RNActivityIndicator color="#fff" /> : <ShieldCheck color="#fff" size={20} />}
+                            <Text style={styles.loginBtnText}>{isActivating ? 'Activating...' : 'Activate Device'}</Text>
+                        </TouchableOpacity>
+                    </View>
+                ) : deviceLock ? (
+                    <View style={[styles.activationBox, { borderColor: 'rgba(248,113,113,0.3)', backgroundColor: 'rgba(248,113,113,0.1)' }]}>
+                        <AlertTriangle color="#f87171" size={48} style={{ marginBottom: 16 }} />
+                        <Text style={[styles.activationTitle, { color: '#f87171' }]}>Device Locked</Text>
+                        <Text style={styles.activationText}>
+                            Due to too many failed login attempts, this device has been temporarily locked to prevent brute-force attacks.
+                        </Text>
+                        <View style={{ backgroundColor: 'rgba(0,0,0,0.3)', padding: 16, borderRadius: 12, marginTop: 10 }}>
+                            <Text style={{ color: '#fca5a5', fontWeight: 'bold', fontSize: 16 }}>
+                                Try again in {deviceLock.remainingMinutes} minute(s).
+                            </Text>
+                        </View>
+                        <TouchableOpacity style={[styles.loginBtn, { marginTop: 20, backgroundColor: 'rgba(255,255,255,0.1)' }]} onPress={loadUsers}>
+                            <Text style={styles.loginBtnText}>Refresh Status</Text>
+                        </TouchableOpacity>
                     </View>
                 ) : (
-                    <PasswordPad
-                        selectedUser={selectedUser}
-                        onSubmit={handlePasswordSubmit}
-                        onBack={handleBack}
-                        loading={isLoading}
-                        error={loginError}
-                    />
+                    <>
+                        {isStale && !selectedUser && (
+                            <View style={styles.staleBanner}>
+                                <AlertTriangle color="#fbbf24" size={16} />
+                                <Text style={styles.staleText}>Last security sync was {'>'} 24h ago. Reconnect to refresh credentials.</Text>
+                            </View>
+                        )}
+                        {/* User picker or PIN pad */}
+                        {!selectedUser ? (
+                            <View style={styles.pickerArea}>
+                                <Text style={styles.pickerLabel}>Select your account</Text>
+                                <ScrollView
+                                    horizontal
+                                    showsHorizontalScrollIndicator={false}
+                                    contentContainerStyle={styles.userList}
+                                >
+                                    {users.map(u => (
+                                        <UserCard
+                                            key={u.id}
+                                            user={u}
+                                            onSelect={handleSelectUser}
+                                            selected={selectedUser?.id === u.id}
+                                        />
+                                    ))}
+                                </ScrollView>
+                                <View style={styles.divider} />
+                                <Text style={styles.footer}>© 2026 GeloPOS · All rights reserved</Text>
+                            </View>
+                        ) : (
+                            <PasswordPad
+                                selectedUser={selectedUser}
+                                onSubmit={handlePasswordSubmit}
+                                onBack={handleBack}
+                                loading={isLoading}
+                                error={loginError}
+                            />
+                        )}
+                    </>
                 )}
             </Animated.View>
         </View>
@@ -468,5 +624,48 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         letterSpacing: 0.5,
         textDecorationLine: 'none',
+    },
+
+    // Activation & Stale UI
+    activationBox: {
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+        borderRadius: 28,
+        padding: 40,
+        alignItems: 'center',
+        width: 400,
+        maxWidth: '90%',
+    },
+    activationTitle: {
+        fontSize: 22,
+        fontWeight: '800',
+        color: '#fff',
+        marginBottom: 12,
+        textAlign: 'center',
+    },
+    activationText: {
+        fontSize: 15,
+        color: 'rgba(255,255,255,0.6)',
+        textAlign: 'center',
+        lineHeight: 22,
+        marginBottom: 10,
+    },
+    staleBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(251,191,36,0.15)',
+        paddingVertical: 8,
+        paddingHorizontal: 16,
+        borderRadius: 12,
+        marginBottom: 20,
+        gap: 8,
+        borderWidth: 1,
+        borderColor: 'rgba(251,191,36,0.3)',
+    },
+    staleText: {
+        color: '#fbbf24',
+        fontSize: 12,
+        fontWeight: '600',
     },
 });

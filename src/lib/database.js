@@ -287,68 +287,37 @@ export const initDB = async () => {
             console.warn('product_variants CI index migration:', err.message);
         }
 
-        // --- Seed default users if none exist ---
+        // --- Note: Default users removed for security in PWA. ---
+        // Activation & First Sync will now populate this table.
+
+        // Migration: Ensure users table has all required columns
         try {
-            const userCount = await db.getFirstAsync('SELECT COUNT(*) as cnt FROM users');
-            if (!userCount || userCount.cnt === 0) {
-                await db.execAsync(`
-                    INSERT INTO users (username, password, role, can_access_pos, can_access_kitchen, can_access_admin, can_access_analytics, can_access_settings, can_access_inventory, avatar_emoji)
-                    VALUES ('Admin', '1234', 'admin', 1, 1, 1, 1, 1, 1, '👑');
-                    INSERT INTO users (username, password, role, can_access_pos, can_access_kitchen, can_access_admin, can_access_analytics, can_access_settings, can_access_inventory, avatar_emoji)
-                    VALUES ('Cashier', '5678', 'cashier', 1, 1, 0, 1, 0, 0, '🧑‍💼');
-                `);
-                console.log('Seeded default Admin and Cashier users.');
-            }
-        } catch (err) {
-            console.error('Error seeding default users:', err);
-        }
-
-        // --- Migration: Add users table for existing installs ---
-        try {
-            await db.execAsync(`
-                CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT NOT NULL UNIQUE,
-                    password TEXT NOT NULL,
-                    role TEXT DEFAULT 'staff',
-                    can_access_pos INTEGER DEFAULT 1,
-                    can_access_kitchen INTEGER DEFAULT 1,
-                    can_access_admin INTEGER DEFAULT 0,
-                    can_access_analytics INTEGER DEFAULT 0,
-                    can_access_settings INTEGER DEFAULT 0,
-                    can_access_inventory INTEGER DEFAULT 0,
-                    avatar_emoji TEXT DEFAULT '👤',
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                );
-            `);
-
-            // Add new column to existing database if it already exists
-            try {
-                await db.execAsync(`ALTER TABLE users ADD COLUMN can_access_settings INTEGER DEFAULT 0;`);
-                await db.execAsync(`UPDATE users SET can_access_settings = 1 WHERE role = 'admin';`);
-            } catch (err) {
-                // column exists
-            }
-            try {
-                await db.execAsync(`ALTER TABLE users ADD COLUMN can_access_inventory INTEGER DEFAULT 0;`);
-                await db.execAsync(`UPDATE users SET can_access_inventory = 1 WHERE role = 'admin';`);
-            } catch (err) {
-            }
-        } catch (err) {
-            console.error('Migration error for users table:', err);
-        }
-
-            try {
-                const usersInfo = await db.getAllAsync(`PRAGMA table_info(users)`);
-                const hasPinColumn = usersInfo.some(col => col.name === 'pin');
-                const hasPasswordColumn = usersInfo.some(col => col.name === 'password');
-                if (hasPinColumn && !hasPasswordColumn) {
-                    await db.execAsync(`ALTER TABLE users RENAME COLUMN pin TO password;`);
-                    console.log("Renamed 'pin' column to 'password' in users table");
+            const usersInfo = await db.getAllAsync(`PRAGMA table_info(users)`);
+            const columns = [
+                { name: 'can_access_settings', type: 'INTEGER DEFAULT 0' },
+                { name: 'can_access_inventory', type: 'INTEGER DEFAULT 0' }
+            ];
+            for (const col of columns) {
+                if (!usersInfo.some(c => c.name === col.name)) {
+                    await db.execAsync(`ALTER TABLE users ADD COLUMN ${col.name} ${col.type};`);
                 }
-            } catch (err) {
-                console.error('Migration error for users password column:', err);
             }
+            await db.execAsync(`UPDATE users SET can_access_settings = 1, can_access_inventory = 1 WHERE role = 'admin';`);
+        } catch (err) {
+            console.error('Migration error for users table columns:', err);
+        }
+
+        try {
+            const usersInfo = await db.getAllAsync(`PRAGMA table_info(users)`);
+            const hasPinColumn = usersInfo.some(col => col.name === 'pin');
+            const hasPasswordColumn = usersInfo.some(col => col.name === 'password');
+            if (hasPinColumn && !hasPasswordColumn) {
+                await db.execAsync(`ALTER TABLE users RENAME COLUMN pin TO password;`);
+                console.log("Renamed 'pin' column to 'password' in users table");
+            }
+        } catch (err) {
+            console.error('Migration error for users password column:', err);
+        }
 
         console.log("Database initialized successfully.");
     } catch (e) {
@@ -356,21 +325,32 @@ export const initDB = async () => {
     }
 };
 
-export const getDeviceId = async () => {
+export const getSetting = async (key) => {
     try {
         const db = await getDBConnection();
-        const settings = await db.getFirstAsync('SELECT value FROM settings WHERE key = ?', 'device_id');
-        
-        if (settings && settings.value) {
-            return settings.value;
-        }
-        
-        // Generate new random ID
-        const newId = `DEV-${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
-        await db.runAsync('INSERT INTO settings (key, value) VALUES (?, ?)', 'device_id', newId);
-        return newId;
+        const row = await db.getFirstAsync('SELECT value FROM settings WHERE key = $key', { $key: key });
+        return row ? row.value : null;
     } catch (e) {
-        console.error("Failed to get device_id", e);
-        return 'UNKNOWN-DEVICE';
+        console.error(`Failed to get setting ${key}:`, e);
+        return null;
     }
+};
+
+export const updateSetting = async (key, value) => {
+    try {
+        const db = await getDBConnection();
+        await db.runAsync('INSERT OR REPLACE INTO settings (key, value) VALUES ($key, $val)', { $key: key, $val: String(value) });
+    } catch (e) {
+        console.error(`Failed to update setting ${key}:`, e);
+    }
+};
+
+export const getDeviceId = async () => {
+    const existing = await getSetting('device_id');
+    if (existing) return existing;
+    
+    // Generate new random ID
+    const newId = `DEV-${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
+    await updateSetting('device_id', newId);
+    return newId;
 };
