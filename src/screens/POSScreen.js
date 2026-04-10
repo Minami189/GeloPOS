@@ -227,7 +227,7 @@ export default function POSScreen({ navigation }) {
                 "SELECT COUNT(*) as count FROM orders WHERE DATE(created_at) = DATE('now', 'localtime') AND device_id = ?",
                 localDevId
             );
-            const dailyOrderNum = todayCount ? todayCount.count : 0; // Starts with 0
+            const dailyOrderNum = (todayCount ? todayCount.count : 0) + 1;
 
             // Create Order
             const res = await db.runAsync(
@@ -241,9 +241,7 @@ export default function POSScreen({ navigation }) {
 
             const orderId = res.lastInsertRowId;
 
-            const dayStr = String(new Date().getDate()).padStart(2, '0');
-            const paddedNo = String(dailyOrderNum + 1).padStart(2, '0');
-            setLastOrderDisplay(`${dayStr}-${paddedNo}`);
+            setLastOrderDisplay(String(dailyOrderNum));
 
             setFinalChange(changeAmount);
 
@@ -293,6 +291,12 @@ export default function POSScreen({ navigation }) {
             </tr>
         `).join('');
 
+        let itemsKitchenHtml = items.map(item => `
+            <tr>
+                <td style="padding: 4px 0; font-size: 16px; font-weight: bold;">${item.quantity}x ${item.product.name} ${item.variant ? `(${item.variant.name})` : ''}</td>
+            </tr>
+        `).join('');
+
         let discountHtml = '';
         if (discountAmt > 0) {
             discountHtml = `
@@ -325,14 +329,13 @@ export default function POSScreen({ navigation }) {
                     <div class="divider"></div>
                     <p>THIS IS NOT AN OFFICIAL RECEIPT</p>
                     <div class="divider"></div>
-                    <h1>Gelo's POS</h1>
-                    <h2>ORDER SLIP</h2>
-                    <p class="center">
-                        ${dateStr}
-                    </p>
-                    <p>Order #${orderIdDisplay}</p>
-                    <p>Order Type:<b> ${orderType} </b></p>
-                    ${customerName ? `<p>Customer: ${customerName}</p>` : ''}
+                    
+                    <h1 style="font-size: 60px; margin: 10px 0;"># ${orderIdDisplay}</h1>
+                    <h2 style="margin: 0;">Gelo's POS</h2>
+                    <p style="font-size: 16px; margin: 5px 0;">Order Type:<b> ${orderType} </b></p>
+                    ${customerName ? `<p style="font-size: 16px;">Customer: ${customerName}</p>` : ''}
+                    <p class="center">${dateStr}</p>
+
                     <div class="divider"></div>
                     <table>
                         ${itemsHtml}
@@ -357,6 +360,23 @@ export default function POSScreen({ navigation }) {
                     <p>FOR INTERNAL USE ONLY</p>
                     <p>THIS IS NOT AN OFFICIAL RECEIPT</p>
                     <div class="divider"></div>
+                    
+                    <p style="text-align: center;">--- END OF CUSTOMER COPY ---</p>
+                    
+                    <div style="page-break-before: always; margin-top: 40px;"></div>
+
+                    <div class="divider"></div>
+                    <h1>KITCHEN TICKET</h1>
+                    <h1 style="font-size: 72px; margin: 10px 0;"># ${orderIdDisplay}</h1>
+                    <p style="font-size: 18px; margin: 5px 0;">Order Type:<b> ${orderType} </b></p>
+                    ${customerName ? `<p style="font-size: 18px;">Customer: ${customerName}</p>` : ''}
+                    <p class="center">${dateStr}</p>
+                    <div class="divider"></div>
+                    <table>
+                        ${itemsKitchenHtml}
+                    </table>
+                    <div class="divider"></div>
+                    <p style="text-align: center;">--- END OF KITCHEN COPY ---</p>
                 </body>
             </html>
         `;

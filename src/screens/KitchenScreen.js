@@ -203,8 +203,9 @@ export default function KitchenScreen() {
     };
 
     const orderLabel = (order) => {
-        if (order.customer_name) return `${order.customer_name} · #${order.id}`;
-        return `Order #${order.id}`;
+        const orderNum = order.daily_order_number || order.id;
+        if (order.customer_name) return `${order.customer_name} · #${orderNum}`;
+        return `Order #${orderNum}`;
     };
 
     return (
