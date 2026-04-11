@@ -683,6 +683,16 @@ export const clearDeviceLock = async (deviceId) => {
 
 export const fetchUsersFromSupabase = async () => {
     try {
+        const url = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
+        const isDummy = !url || url.includes('xyzcompany.supabase.co');
+
+        if (isDummy) {
+            return { 
+                success: false, 
+                error: "Configuration Error: EXPO_PUBLIC_SUPABASE_URL is missing or set to a placeholder. Setup environment variables in .env (local) or your deployment dashboard." 
+            };
+        }
+
         const { data: usersData, error } = await supabase.from('pos_users').select('*');
         if (error) throw error;
         if (!usersData || usersData.length === 0) return { success: true, count: 0 };
@@ -710,7 +720,15 @@ export const fetchUsersFromSupabase = async () => {
         return { success: true, count: usersData.length };
     } catch (error) {
         console.error('Fetch users from Supabase failed:', error);
-        return { success: false, error: error.message };
+        
+        if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
+            return { 
+                success: false, 
+                error: `Network Error: Failed to reach Supabase. Check your internet or if the Supabase domain is blocked. URL: ${process.env.EXPO_PUBLIC_SUPABASE_URL}` 
+            };
+        }
+
+        return { success: false, error: error.message || 'Unknown error during user fetch' };
     }
 };
 

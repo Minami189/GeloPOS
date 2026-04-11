@@ -31,6 +31,16 @@ export default function App() {
       setDbReady(true);
     };
     setup();
+
+    // Register Service Worker for PWA (Web only)
+    if (Platform.OS === 'web' && 'serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').then(
+          (reg) => console.log('SW Registered:', reg.scope),
+          (err) => console.log('SW Registration Failed:', err)
+        );
+      });
+    }
   }, []);
 
   if (!dbReady) {

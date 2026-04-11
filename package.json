@@ -7,7 +7,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "build:web": "expo export --platform web"
+    "build:web": "expo export --platform web && node -e \"const fs = require('fs'); if (fs.existsSync('public')) { fs.readdirSync('public').forEach(file => { if (file !== 'index.html') fs.copyFileSync('public/' + file, 'dist/' + file); }); }\""
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
