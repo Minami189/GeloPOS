@@ -8,99 +8,20 @@ import { getDBConnection } from '../../lib/database';
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // GeloPOS-scope system prompt for the chatbot
-const SYSTEM_PROMPT = `You are GeloPOS Assistant, an AI helper for the GeloPOS point-of-sale system. 
-You ONLY answer questions related to: sales data, product performance, ingredient stock, order trends, 
-pricing strategies, and GeloPOS operations. 
-If the user asks anything unrelated to the POS system or business operations, politely redirect them 
-back to GeloPOS topics. Always be concise and actionable.`;
-
-// Simple linear regression forecast
-function linearForecast(values) {
-    if (!values || values.length < 2) return 0;
-    const n = values.length;
-    const meanX = (n - 1) / 2;
-    const meanY = values.reduce((a, b) => a + b, 0) / n;
-    let num = 0, den = 0;
-    for (let i = 0; i < n; i++) {
-        num += (i - meanX) * (values[i] - meanY);
-        den += (i - meanX) ** 2;
-    }
-    const slope = den !== 0 ? num / den : 0;
-    return Math.max(0, meanY + slope * n); // one step ahead
-}
+const SYSTEM_PROMPT = `You are GeloPOS Assistant, a high-level business analyst for the GeloPOS system.
+You have access to the LIVE BUSINESS STATE which includes full product lists, inventory levels, and sales performance.
+Use this data to answer ANY question the owner might have about their business operations, inventory needs, sales trends, or product performance.
+Be concise, professional, and provide actionable insights. If data appears low (like inventory below 10 units), proactively mention it if relevant to the user's question.`;
 
 export default function AITab() {
-    const [predictions, setPredictions] = useState(null);
-    const [isPredLoading, setIsPredLoading] = useState(false);
     const [messages, setMessages] = useState([
-        { role: 'bot', text: "Hi! I'm your GeloPOS Assistant. Ask me about your sales, stock levels, or product performance." }
+        { role: 'bot', text: "Hi! I'm your GeloPOS Business Assistant. I have access to your live sales, inventory, and product data. How can I help you today?" }
     ]);
     const [inputText, setInputText] = useState('');
     const [isChatLoading, setIsChatLoading] = useState(false);
     const scrollRef = useRef();
 
-    const generatePredictions = async () => {
-        setIsPredLoading(true);
-        try {
-            const db = await getDBConnection();
 
-            // Get daily revenue for the past 30 days
-            const dailyData = await db.getAllAsync(`
-                SELECT DATE(created_at, 'localtime') as day, SUM(total_amount) as revenue
-                FROM orders
-                WHERE status = 'Completed'
-                  AND DATE(created_at) >= DATE('now', '-30 days', 'localtime')
-                GROUP BY day ORDER BY day ASC
-            `);
-
-            // Get weekly data for past 12 weeks
-            const weeklyData = await db.getAllAsync(`
-                SELECT strftime('%Y-%W', created_at, 'localtime') as week, SUM(total_amount) as revenue
-                FROM orders
-                WHERE status = 'Completed'
-                  AND DATE(created_at) >= DATE('now', '-84 days', 'localtime')
-                GROUP BY week ORDER BY week ASC
-            `);
-
-            // Get top and bottom products
-            const allProducts = await db.getAllAsync(`
-                SELECT COALESCE(p.name, 'Deleted Product') as name,
-                       SUM(oi.quantity) as qty,
-                       SUM(oi.quantity * oi.price_at_time) as revenue
-                FROM order_items oi
-                JOIN orders o ON oi.order_id = o.id
-                LEFT JOIN products p ON oi.product_id = p.id
-                WHERE o.status = 'Completed'
-                GROUP BY name
-                ORDER BY revenue DESC
-            `);
-
-            const dailyRevenues = dailyData.map(d => d.revenue);
-            const weeklyRevenues = weeklyData.map(w => w.revenue);
-
-            const avgDaily = dailyRevenues.length > 0
-                ? dailyRevenues.reduce((a, b) => a + b, 0) / dailyRevenues.length : 0;
-
-            const nextWeek = linearForecast(weeklyRevenues) * 1;
-            const nextMonth = avgDaily * 30;
-            const nextYear = avgDaily * 365;
-
-            const top = allProducts[0] || null;
-            const bottom = allProducts.length > 0 ? allProducts[allProducts.length - 1] : null;
-
-            setPredictions({
-                nextWeek,
-                nextMonth,
-                nextYear,
-                top,
-                bottom,
-                totalProducts: allProducts.length,
-            });
-        } catch (e) {
-            console.error('AI predictions error:', e);
-        }
-        setIsPredLoading(false);
-    };
 
     const sendMessage = async () => {
         const text = inputText.trim();
@@ -114,35 +35,46 @@ export default function AITab() {
         try {
             const db = await getDBConnection();
 
-            // 1. Get Top 5 Products (Last 7 Days)
+            // 1. Get All Products
+            const allProducts = await db.getAllAsync('SELECT name, price FROM products WHERE deleted_at IS NULL');
+            const productList = allProducts.map(p => `${p.name} (₱${p.price.toFixed(2)})`).join(', ');
+
+            // 2. Get All Ingredients / Inventory
+            const allIngredients = await db.getAllAsync('SELECT name, stock_quantity, unit FROM ingredients WHERE deleted_at IS NULL');
+            const inventoryList = allIngredients.map(i => `${i.name}: ${i.stock_quantity} ${i.unit}`).join(', ');
+
+            // 3. Get Top 10 Products (Last 30 Days)
             const recentTop = await db.getAllAsync(`
                 SELECT COALESCE(p.name, 'Deleted') as name, SUM(oi.quantity) as qty
                 FROM order_items oi
                 JOIN orders o ON oi.order_id = o.id
                 LEFT JOIN products p ON oi.product_id = p.id
-                WHERE o.status = 'Completed' AND DATE(o.created_at) >= DATE('now', '-7 days', 'localtime')
-                GROUP BY name ORDER BY qty DESC LIMIT 5
+                WHERE o.status = 'Completed' AND DATE(o.created_at) >= DATE('now', '-30 days', 'localtime')
+                GROUP BY name ORDER BY qty DESC LIMIT 10
             `);
-            const topProducts = recentTop.map(s => `${s.name}: ${s.qty} units`).join(', ') || 'No sales';
+            const topProducts = recentTop.map(s => `${s.name} (${s.qty} sold)`).join(', ') || 'No sales';
 
-            // 2. Get Today's Totals
+            // 4. Get Today's Totals
             const todayStats = await db.getFirstAsync(`
                 SELECT COUNT(*) as count, SUM(total_amount) as revenue
                 FROM orders
                 WHERE status = 'Completed' AND DATE(created_at) = DATE('now', 'localtime')
             `);
 
-            // 3. Get Last 7 Days Totals
+            // 5. Get Last 7 Days Totals
             const weekStats = await db.getFirstAsync(`
                 SELECT COUNT(*) as count, SUM(total_amount) as revenue
                 FROM orders
                 WHERE status = 'Completed' AND DATE(created_at) >= DATE('now', '-7 days', 'localtime')
             `);
 
-            const salesContext = `
-                - Today's Revenue: ₱${(todayStats?.revenue || 0).toFixed(2)} (${todayStats?.count || 0} orders)
-                - 7-Day Revenue: ₱${(weekStats?.revenue || 0).toFixed(2)} (${weekStats?.count || 0} orders)
-                - Recent Top Sellers: ${topProducts}
+            const posContext = `
+[LIVE BUSINESS STATE]
+- PRODUCTS: ${productList}
+- INVENTORY: ${inventoryList}
+- TOP 10 SELLERS (30d): ${topProducts}
+- TODAY: ₱${(todayStats?.revenue || 0).toFixed(2)} (${todayStats?.count || 0} orders)
+- 7-DAY: ₱${(weekStats?.revenue || 0).toFixed(2)} (${weekStats?.count || 0} orders)
             `.trim();
 
             const apiKey = process.env.EXPO_PUBLIC_AI_ENDPOINT;
@@ -168,7 +100,7 @@ export default function AITab() {
             const attemptChat = async (modelName) => {
                 const model = genAI.getGenerativeModel({
                     model: modelName,
-                    systemInstruction: SYSTEM_PROMPT + `\n\nLive POS Context:\n${salesContext}`
+                    systemInstruction: SYSTEM_PROMPT + `\n\nLive Context:\n${posContext}`
                 });
                 const chat = model.startChat({ history: filteredHistory });
                 const result = await chat.sendMessage(text);
@@ -248,74 +180,8 @@ export default function AITab() {
 
     return (
         <View style={{ flex: 1 }}>
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
-                {/* Predictions section */}
-                <View style={s.section}>
-                    <View style={s.sectionHeader}>
-                        <Sparkles color="#8b5cf6" size={22} />
-                        <Text style={s.sectionTitle}>Sales Predictions</Text>
-                    </View>
-                    <Text style={s.sectionSub}>AI-powered forecast based on your historical data</Text>
-
-                    {!predictions ? (
-                        <TouchableOpacity style={s.generateBtn} onPress={generatePredictions} disabled={isPredLoading}>
-                            {isPredLoading
-                                ? <ActivityIndicator size="small" color="#fff" />
-                                : <Sparkles color="#fff" size={18} />}
-                            <Text style={s.generateBtnText}>
-                                {isPredLoading ? 'Analyzing data...' : 'Generate Predictions'}
-                            </Text>
-                        </TouchableOpacity>
-                    ) : (
-                        <>
-                            <View style={s.predictRow}>
-                                {[
-                                    { label: 'Next Week', value: predictions.nextWeek, color: '#3b82f6', bg: '#eff6ff' },
-                                    { label: 'Next Month', value: predictions.nextMonth, color: '#8b5cf6', bg: '#f5f3ff' },
-                                    { label: 'Next Year', value: predictions.nextYear, color: '#10b981', bg: '#ecfdf5' },
-                                ].map((p, i) => (
-                                    <View key={i} style={[s.predictCard, { backgroundColor: p.bg, borderColor: p.color + '44' }]}>
-                                        <Text style={[s.predictPeriod, { color: p.color }]}>{p.label}</Text>
-                                        <Text style={[s.predictValue, { color: p.color }]}>₱{p.value.toFixed(0)}</Text>
-                                        <Text style={s.predictSub}>predicted revenue</Text>
-                                    </View>
-                                ))}
-                            </View>
-
-                            {/* Summary paragraph */}
-                            {predictions.top && (
-                                <View style={s.summaryBox}>
-                                    <View style={s.summaryRow}>
-                                        <TrendingUp color="#10b981" size={18} />
-                                        <Text style={s.summaryText}>
-                                            <Text style={s.summaryBold}>{predictions.top.name}</Text> is your highest-grossing product
-                                            with ₱{predictions.top.revenue?.toFixed(2)} in total revenue
-                                            ({predictions.top.qty} units sold).
-                                        </Text>
-                                    </View>
-                                    {predictions.bottom && predictions.bottom.name !== predictions.top.name && (
-                                        <View style={s.summaryRow}>
-                                            <TrendingDown color="#ef4444" size={18} />
-                                            <Text style={s.summaryText}>
-                                                <Text style={s.summaryBold}>{predictions.bottom.name}</Text> has the lowest sales
-                                                ({predictions.bottom.qty} units, ₱{predictions.bottom.revenue?.toFixed(2)}).
-                                                Consider promoting it or reviewing its pricing.
-                                            </Text>
-                                        </View>
-                                    )}
-                                </View>
-                            )}
-
-                            <TouchableOpacity style={s.refreshPredBtn} onPress={generatePredictions}>
-                                <Text style={s.refreshPredText}>Refresh Predictions</Text>
-                            </TouchableOpacity>
-                        </>
-                    )}
-                </View>
-            </ScrollView>
-
-            {/* Chatbot */}
-            <View style={s.chatContainer}>
+            {/* Chatbot expanded to full screen height */}
+            <View style={[s.chatContainer, { flex: 1 }]}>
                 <View style={s.chatHeader}>
                     <Bot color="#8b5cf6" size={20} />
                     <Text style={s.chatTitle}>GeloPOS Assistant</Text>

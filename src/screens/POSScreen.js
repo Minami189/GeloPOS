@@ -608,38 +608,6 @@ export default function POSScreen({ navigation }) {
                 </View>
             </View>
 
-            {/* Low-Stock Warning Modal */}
-            <Modal visible={stockWarningVisible} transparent animationType="fade">
-                <View style={styles.modalOverlay}>
-                    <View style={styles.warningModal}>
-                        <Text style={styles.warningTitle}>⚠️ Low Stock Warning</Text>
-                        <Text style={styles.warningSubtitle}>The following ingredients are insufficient for this order:</Text>
-                        <ScrollView style={{ maxHeight: 200, marginVertical: 15 }}>
-                            {stockWarnings.map((w, i) => (
-                                <View key={i} style={styles.warningItem}>
-                                    <Text style={styles.warningItemText}>{w}</Text>
-                                </View>
-                            ))}
-                        </ScrollView>
-                        <Text style={styles.warningQuestion}>Do you want to continue anyway?</Text>
-                        <View style={styles.warningActions}>
-                            <TouchableOpacity
-                                style={styles.warnCancelBtn}
-                                onPress={() => setStockWarningVisible(false)}
-                            >
-                                <Text style={styles.warnCancelText}>Cancel Order</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                                style={styles.warnContinueBtn}
-                                onPress={confirmSubmitOrder}
-                            >
-                                <Text style={styles.warnContinueText}>Continue Anyway</Text>
-                            </TouchableOpacity>
-                        </View>
-                    </View>
-                </View>
-            </Modal>
-
             {/* Variant Modal */}
             <Modal visible={variantModalVisible} transparent animationType="fade">
                 <View style={styles.modalOverlay}>
@@ -783,6 +751,38 @@ export default function POSScreen({ navigation }) {
                         </View>
                     )}
                 </KeyboardAvoidingView>
+            </Modal>
+
+            {/* Low-Stock Warning Modal */}
+            <Modal visible={stockWarningVisible} transparent animationType="fade">
+                <View style={styles.modalOverlay}>
+                    <View style={styles.warningModal}>
+                        <Text style={styles.warningTitle}>⚠️ Low Stock Warning</Text>
+                        <Text style={styles.warningSubtitle}>The following ingredients are insufficient for this order:</Text>
+                        <ScrollView style={{ maxHeight: 200, marginVertical: 15 }}>
+                            {stockWarnings.map((w, i) => (
+                                <View key={i} style={styles.warningItem}>
+                                    <Text style={styles.warningItemText}>{w}</Text>
+                                </View>
+                            ))}
+                        </ScrollView>
+                        <Text style={styles.warningQuestion}>Do you want to continue anyway?</Text>
+                        <View style={styles.warningActions}>
+                            <TouchableOpacity
+                                style={styles.warnCancelBtn}
+                                onPress={() => setStockWarningVisible(false)}
+                            >
+                                <Text style={styles.warnCancelText}>Cancel Order</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.warnContinueBtn}
+                                onPress={confirmSubmitOrder}
+                            >
+                                <Text style={styles.warnContinueText}>Continue Anyway</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
             </Modal>
         </View>
     );
