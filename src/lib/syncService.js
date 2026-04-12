@@ -208,11 +208,16 @@ export const syncCatalogToSupabase = async () => {
 
                             let uploadPayload;
                             if (Platform.OS === 'web') {
-                                // Web branch: convert fetch result to Blob for better compatibility
-                                const response = await fetch(rest.image_uri);
-                                uploadPayload = await response.blob();
-                                if (rest.image_uri.startsWith('data:')) {
-                                    fileExt = rest.image_uri.split(';')[0].split('/')[1] || 'jpg';
+                                try {
+                                    // Robust fetch for web (Netlify/Standard Browsers)
+                                    const response = await fetch(rest.image_uri, { mode: 'cors' });
+                                    uploadPayload = await response.blob();
+                                    if (rest.image_uri.startsWith('data:')) {
+                                        fileExt = rest.image_uri.split(';')[0].split('/')[1] || 'jpg';
+                                    }
+                                } catch (fetchErr) {
+                                    console.error("[SYNC] ❌ Deployment Security Error: Could not capture image data. This often happens if the Image Picker URI is expired or restricted.", fetchErr);
+                                    throw fetchErr;
                                 }
                             } else {
                                 // Mobile branch: use ArrayBuffer via FileSystem
