@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 import { getDBConnection } from '../lib/database';
+import bcrypt from 'bcryptjs';
+import { syncUsersToSupabase } from '../lib/syncService';
 
 const AuthContext = createContext(null);
 
@@ -9,11 +11,48 @@ export function AuthProvider({ children }) {
     const login = useCallback(async (userId, password) => {
         try {
             const db = await getDBConnection();
+            
+            // 1. Fetch user by ID only
             const user = await db.getFirstAsync(
-                'SELECT * FROM users WHERE id = ? AND password = ?',
-                [userId, password]
+                'SELECT * FROM users WHERE id = ?',
+                [userId]
             );
-            if (user) {
+
+            if (!user) {
+                return { success: false, error: 'User not found.' };
+            }
+
+            let isValid = false;
+            let isLegacy = false;
+
+            // 2. Try bcrypt comparison
+            try {
+                isValid = bcrypt.compareSync(password, user.password);
+            } catch (e) {
+                // Not a valid bcrypt hash, likely plain text
+                isValid = false;
+            }
+
+            // 3. Fallback for legacy plain-text passwords
+            if (!isValid && password === user.password) {
+                isValid = true;
+                isLegacy = true; // Flag for auto-migration
+            }
+
+            if (isValid) {
+                // 4. Auto-migrate legacy user to bcrypt
+                if (isLegacy) {
+                    try {
+                        const newHash = bcrypt.hashSync(password, 10);
+                        await db.runAsync('UPDATE users SET password = ? WHERE id = ?', [newHash, userId]);
+                        // Trigger background sync to update Supabase
+                        syncUsersToSupabase().catch(err => console.error('Auto-migration sync failed:', err));
+                        console.log(`[AUTH] Auto-migrated user ${user.username} to bcrypt encryption.`);
+                    } catch (migrationErr) {
+                        console.error('[AUTH] Failed to auto-migrate legacy password:', migrationErr);
+                    }
+                }
+
                 setCurrentUser({
                     id: user.id,
                     username: user.username,

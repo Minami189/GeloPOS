@@ -6,6 +6,24 @@ import { supabase } from '../../lib/supabase';
 import { Plus, Edit2, Trash2, X, UploadCloud, ChevronDown } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 
+const ProductImage = ({ uri, style, placeholderStyle }) => {
+    const [error, setError] = React.useState(false);
+    
+    // Reset error if URI changes (e.g. after a sync)
+    React.useEffect(() => {
+        setError(false);
+    }, [uri]);
+
+    if (!uri || error) return <View style={placeholderStyle} />;
+    return (
+        <Image 
+            source={{ uri }} 
+            style={style} 
+            onError={() => setError(true)}
+        />
+    );
+};
+
 const DropdownPicker = ({ label, items, selectedId, onSelect, displayKey = "name", valueKey = "id", placeholder = "Select..." }) => {
     const [isOpen, setIsOpen] = useState(false);
     return (
@@ -379,17 +397,7 @@ export default function ProductsTab() {
                 renderItem={({ item }) => (
                     <View style={styles.tableRow}>
                         <View style={{ flex: 1 }}>
-                            {item.image_uri ?
-                                <Image 
-                                    key={item.image_uri} // Force re-render if URI changes
-                                    source={{ uri: item.image_uri }} 
-                                    style={styles.thumbnail}
-                                    onError={(e) => {
-                                        console.warn(`Failed to load image for ${item.name}: ${item.image_uri}`);
-                                    }}
-                                /> :
-                                <View style={styles.thumbnailPlaceholder} />
-                            }
+                            <ProductImage uri={item.image_uri} style={styles.thumbnail} placeholderStyle={styles.thumbnailPlaceholder} />
                         </View>
                         <Text style={[styles.cellText, { flex: 2, fontWeight: 'bold' }]}>{item.name}</Text>
                         <Text style={styles.cellText}>{item.category_name || 'Uncategorized'}</Text>

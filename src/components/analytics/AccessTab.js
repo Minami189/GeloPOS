@@ -1,4 +1,5 @@
 import React, { useState, useCallback } from 'react';
+import bcrypt from 'bcryptjs';
 import {
     View, Text, StyleSheet, ScrollView, TouchableOpacity,
     TextInput, Alert, Switch, ActivityIndicator, Modal
@@ -330,11 +331,26 @@ export default function AccessTab() {
     const handleChangeAdminPassword = async (currentPassword, newPassword) => {
         const db = await getDBConnection();
         const adminUser = users.find(u => u.role === 'admin' && u.id === currentUser.id);
-        if (!adminUser || adminUser.password !== currentPassword) {
+        
+        if (!adminUser) return;
+
+        // Verify current password (could be plain-text if not migrated yet)
+        let isValid = false;
+        try {
+            isValid = bcrypt.compareSync(currentPassword, adminUser.password);
+        } catch (e) { isValid = false; }
+
+        if (!isValid && currentPassword === adminUser.password) {
+            isValid = true;
+        }
+
+        if (!isValid) {
             Alert.alert('Error', 'Current password is incorrect.');
             return;
         }
-        await db.runAsync('UPDATE users SET password = ? WHERE id = ?', [newPassword, adminUser.id]);
+
+        const hashedNewPassword = bcrypt.hashSync(newPassword, 10);
+        await db.runAsync('UPDATE users SET password = ? WHERE id = ?', [hashedNewPassword, adminUser.id]);
         await syncUsersToSupabase();
         Alert.alert('Success', 'Admin password updated.');
         loadUsers();
@@ -361,10 +377,12 @@ export default function AccessTab() {
 
     const handleUpdatePermissions = async (userId, perms, newPassword, avatar) => {
         const db = await getDBConnection();
-        if (newPassword) {
+        const passwordToSave = newPassword ? bcrypt.hashSync(newPassword, 10) : null;
+
+        if (passwordToSave) {
             await db.runAsync(
                 `UPDATE users SET can_access_pos=?, can_access_kitchen=?, can_access_admin=?, can_access_analytics=?, can_access_settings=?, can_access_inventory=?, password=?, avatar_emoji=? WHERE id=?`,
-                [perms.can_access_pos ? 1 : 0, perms.can_access_kitchen ? 1 : 0, perms.can_access_admin ? 1 : 0, perms.can_access_analytics ? 1 : 0, perms.can_access_settings ? 1 : 0, perms.can_access_inventory ? 1 : 0, newPassword, avatar, userId]
+                [perms.can_access_pos ? 1 : 0, perms.can_access_kitchen ? 1 : 0, perms.can_access_admin ? 1 : 0, perms.can_access_analytics ? 1 : 0, perms.can_access_settings ? 1 : 0, perms.can_access_inventory ? 1 : 0, passwordToSave, avatar, userId]
             );
         } else {
             await db.runAsync(
@@ -389,10 +407,11 @@ export default function AccessTab() {
                 perms.can_access_settings ? 1 : 0,
                 perms.can_access_inventory ? 1 : 0,
             ];
+            const hashedPassword = bcrypt.hashSync(password, 10);
             await db.runAsync(
                 `INSERT INTO users (username, password, role, can_access_pos, can_access_kitchen, can_access_admin, can_access_analytics, can_access_settings, can_access_inventory, avatar_emoji)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [username, password, role, ...adminPerms, avatar]
+                [username, hashedPassword, role, ...adminPerms, avatar]
             );
             await syncUsersToSupabase();
             Alert.alert('Success', `${username} has been added.`);

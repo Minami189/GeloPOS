@@ -35,6 +35,18 @@ export default function POSScreen({ navigation }) {
     // Low-stock warning state
     const [stockWarningVisible, setStockWarningVisible] = useState(false);
     const [stockWarnings, setStockWarnings] = useState([]);
+ 
+    const ProductImage = ({ uri, style, placeholderStyle }) => {
+        const [error, setError] = useState(false);
+        if (!uri || error) return <View style={placeholderStyle} />;
+        return (
+            <Image 
+                source={{ uri }} 
+                style={style} 
+                onError={() => setError(true)}
+            />
+        );
+    };
 
     useFocusEffect(
         useCallback(() => {
@@ -518,10 +530,7 @@ export default function POSScreen({ navigation }) {
                     }
                     renderItem={({ item }) => (
                         <TouchableOpacity style={styles.productCard} onPress={() => handleProductSelect(item)}>
-                            {item.image_uri ?
-                                <Image source={{ uri: item.image_uri }} style={styles.productImage} /> :
-                                <View style={styles.productPlaceholder} />
-                            }
+                            <ProductImage uri={item.image_uri} style={styles.productImage} placeholderStyle={styles.productPlaceholder} />
                             <Text numberOfLines={2} style={styles.productName}>{item.name}</Text>
                             <Text style={styles.productPrice}>₱{item.price.toFixed(2)}</Text>
                         </TouchableOpacity>
