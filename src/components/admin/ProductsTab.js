@@ -380,7 +380,14 @@ export default function ProductsTab() {
                     <View style={styles.tableRow}>
                         <View style={{ flex: 1 }}>
                             {item.image_uri ?
-                                <Image source={{ uri: item.image_uri }} style={styles.thumbnail} /> :
+                                <Image 
+                                    key={item.image_uri} // Force re-render if URI changes
+                                    source={{ uri: item.image_uri }} 
+                                    style={styles.thumbnail}
+                                    onError={(e) => {
+                                        console.warn(`Failed to load image for ${item.name}: ${item.image_uri}`);
+                                    }}
+                                /> :
                                 <View style={styles.thumbnailPlaceholder} />
                             }
                         </View>

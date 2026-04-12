@@ -6,12 +6,18 @@ import {
 import { Sparkles, TrendingUp, TrendingDown, Send, Bot, User } from 'lucide-react-native';
 import { getDBConnection } from '../../lib/database';
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { POS_MANUAL } from '../../lib/posManual';
 
 // GeloPOS-scope system prompt for the chatbot
-const SYSTEM_PROMPT = `You are GeloPOS Assistant, a high-level business analyst for the GeloPOS system.
-You have access to the LIVE BUSINESS STATE which includes full product lists, inventory levels, and sales performance.
-Use this data to answer ANY question the owner might have about their business operations, inventory needs, sales trends, or product performance.
-Be concise, professional, and provide actionable insights. If data appears low (like inventory below 10 units), proactively mention it if relevant to the user's question.`;
+const SYSTEM_PROMPT = `You are GeloPOS Assistant, an expert consultant for the GeloPOS system.
+You have two primary sources of truth:
+1. [POS MANUAL]: Use this to give step-by-step instructions for navigation, setup, and general system usage (e.g. "How do I add a product?").
+2. [LIVE BUSINESS STATE]: Use this to answer questions about sales trends, inventory levels, and product performance.
+
+IF THE USER ASKS A "HOW-TO" QUESTION: You MUST look into the [POS MANUAL] and provide the exact steps listed there.
+IF THE USER ASKS ABOUT SALES/STOCK: You MUST look into the [LIVE BUSINESS STATE].
+
+Be professional, concise, and helpful. If data is low, mention it.`;
 
 export default function AITab() {
     const [messages, setMessages] = useState([
@@ -98,28 +104,38 @@ export default function AITab() {
 
             // Function to attempt chat with a specific model
             const attemptChat = async (modelName) => {
+                const combinedSystemText = SYSTEM_PROMPT + `\n\n[POS MANUAL]\n${POS_MANUAL}\n\n[LIVE BUSINESS STATE]\n${posContext}`;
+                
                 const model = genAI.getGenerativeModel({
                     model: modelName,
-                    systemInstruction: SYSTEM_PROMPT + `\n\nLive Context:\n${posContext}`
+                    // Try both string and object formats for systemInstruction for max compatibility
+                    systemInstruction: { parts: [{ text: combinedSystemText }] }
                 });
+
+                // Hybrid approach: If history is empty, prepend the manual to the FIRST message
+                // to ensure the AI "sees" it even if systemInstruction is ignored.
+                let messageToSend = text;
+                if (filteredHistory.length === 0) {
+                    messageToSend = `[REFERENCE MANUAL]\n${POS_MANUAL}\n\n[BUSINESS DATA]\n${posContext}\n\n[QUESTION]\n${text}`;
+                }
+
                 const chat = model.startChat({ history: filteredHistory });
-                const result = await chat.sendMessage(text);
+                const result = await chat.sendMessage(messageToSend);
                 const response = await result.response;
                 return response.text();
             };
 
             let reply = '';
             try {
-                // Try 2.5 Flash Lite first as specifically requested
+                // Restore original model name sequence as requested
                 reply = await attemptChat("gemini-2.5-flash-lite");
             } catch (err) {
                 const errStr = String(err.message);
                 if (errStr.includes('404') || errStr.includes('429') || errStr.includes('not found') || errStr.includes('quota')) {
                     console.log(`Fallback: gemini-2.5-flash-lite failed. Trying gemini-1.5-flash...`);
-                    // Fallback to 1.5 Flash which has much better availability and quota
                     reply = await attemptChat("gemini-1.5-flash");
                 } else {
-                    throw err; // Re-throw if it's a different kind of error (like history order)
+                    throw err; 
                 }
             }
 

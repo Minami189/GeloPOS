@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import { getDBConnection, getDeviceId, updateSetting, getSetting } from './database';
 import * as FileSystem from 'expo-file-system';
+import { Platform, Alert } from 'react-native';
 import { decode } from 'base64-arraybuffer';
 
 let isSyncInProgress = false;
@@ -170,8 +171,26 @@ export const syncCatalogToSupabase = async () => {
 
             if (unsyncedItems && unsyncedItems.length > 0) {
                 const itemsToInsert = [];
+                const itemsToMarkSynced = [];
+
                 for (const item of unsyncedItems) {
                     const { synced, deleted_at, ...rest } = item;
+                    let skipItemMetadataSync = false;
+
+                    // --- STORAGE HEARTBEAT CHECK ---
+                    if (tableDef.local === 'products') {
+                        try {
+                            const { data: listData, error: listError } = await supabase.storage.from('product_images').list('', { limit: 1 });
+                            if (listError) {
+                                console.error("[SYNC] 🛑 BUCKET HEARTBEAT FAILED:", listError.message);
+                                console.log("[SYNC] TIP: This usually means RLS policies or CORS are blocking the app.");
+                            } else {
+                                console.log("[SYNC] 💓 Bucket Heartbeat Success. Connection is open.");
+                            }
+                        } catch (e) {
+                            console.error("[SYNC] Heartbeat crash:", e);
+                        }
+                    }
 
                     // Handle Image Upload for Products
                     const isLocalUri = rest.image_uri && (
@@ -182,87 +201,112 @@ export const syncCatalogToSupabase = async () => {
 
                     if (tableDef.local === 'products' && isLocalUri) {
                         try {
+                            console.log(`[SYNC] Image change detected for product ${rest.id}. Uploading...`);
                             let arrayBuffer;
-                            let fileName = `image_${Date.now()}`;
+                            let fileName = `prod_${rest.id}_${Date.now()}`;
                             let fileExt = 'jpg';
 
-                            if (rest.image_uri.startsWith('file://')) {
-                                fileName = rest.image_uri.split('/').pop();
-                                fileExt = fileName.split('.').pop() || 'jpg';
-                                const base64File = await FileSystem.readAsStringAsync(rest.image_uri, {
-                                    encoding: FileSystem.EncodingType.Base64,
-                                });
-                                arrayBuffer = decode(base64File);
-                            } else {
-                                // Web branch: handle blob: or data:
+                            let uploadPayload;
+                            if (Platform.OS === 'web') {
+                                // Web branch: convert fetch result to Blob for better compatibility
                                 const response = await fetch(rest.image_uri);
-                                arrayBuffer = await response.arrayBuffer();
+                                uploadPayload = await response.blob();
                                 if (rest.image_uri.startsWith('data:')) {
                                     fileExt = rest.image_uri.split(';')[0].split('/')[1] || 'jpg';
                                 }
+                            } else {
+                                // Mobile branch: use ArrayBuffer via FileSystem
+                                const actualFileName = rest.image_uri.split('/').pop();
+                                fileExt = actualFileName.split('.').pop() || 'jpg';
+                                const base64File = await FileSystem.readAsStringAsync(rest.image_uri, {
+                                    encoding: FileSystem.EncodingType.Base64,
+                                });
+                                uploadPayload = decode(base64File);
                             }
 
-                            const mimeType = fileExt.toLowerCase() === 'png' ? 'image/png' : 'image/jpeg';
-                            const bucketPath = `products/${Date.now()}_${fileName}`;
+                            if (!uploadPayload || (uploadPayload.size === 0 && uploadPayload.byteLength === 0)) {
+                                throw new Error("Image data is empty or could not be read.");
+                            }
+
+                            const payloadSize = uploadPayload.size || uploadPayload.byteLength || 0;
+                            console.log(`[SYNC] Image payload ready. Size: ${payloadSize} bytes. Bucket: product_images, Path: catalog/${fileName}.${fileExt}`);
+
+                            fileExt = fileExt.toLowerCase();
+                            const mimeType = fileExt === 'png' ? 'image/png' : (fileExt === 'webp' ? 'image/webp' : 'image/jpeg');
+                            const bucketPath = `catalog/${fileName}.${fileExt}`;
 
                             const { data: uploadData, error: uploadError } = await supabase.storage
                                 .from('product_images')
-                                .upload(bucketPath, arrayBuffer, {
+                                .upload(bucketPath, uploadPayload, {
                                     contentType: mimeType,
                                     cacheControl: '3600',
-                                    upsert: false
+                                    upsert: true
                                 });
 
                             if (uploadError) {
-                                console.error("Image upload failed, continuing without cloud image", uploadError);
+                                console.error("[SYNC] ❌ Image upload REJECTED by Supabase:", uploadError);
+                                skipItemMetadataSync = true;
+                                Alert.alert("Sync Warning", `Image for "${rest.name}" failed to upload. Check Supabase Storage permissions.`);
                             } else {
+                                // Small delay to let Supabase Storage process the upload
+                                await new Promise(resolve => setTimeout(resolve, 500));
+                                
                                 const { data: publicUrlData } = supabase.storage.from('product_images').getPublicUrl(bucketPath);
-                                rest.image_uri = publicUrlData.publicUrl;
+                                const publicUrl = publicUrlData.publicUrl;
+
+                                if (publicUrl && (publicUrl.includes('null') || publicUrl.includes('undefined'))) {
+                                    throw new Error(`Generated invalid Public URL: ${publicUrl}`);
+                                }
+
+                                rest.image_uri = publicUrl;
+                                // Update local DB record with the new cloud URL
                                 await db.runAsync('UPDATE products SET image_uri = ? WHERE id = ?', rest.image_uri, rest.id);
+                                console.log(`[SYNC] ✅ Image upload success. Cloud URI: ${rest.image_uri}`);
                             }
                         } catch (imgErr) {
-                            console.error("Image processing error", imgErr);
+                            console.error("[SYNC] ❌ Image processing crash:", imgErr);
+                            skipItemMetadataSync = true;
                         }
                     }
 
-                    const sanitized = {};
-                    for (const key in rest) {
-                        if (rest[key] === undefined) {
-                            sanitized[key] = null;
-                        } else if (rest[key] instanceof Date) {
-                            sanitized[key] = rest[key].toISOString();
-                        } else {
-                            sanitized[key] = rest[key];
+                    if (!skipItemMetadataSync) {
+                        const sanitized = {};
+                        for (const key in rest) {
+                            if (rest[key] === undefined) {
+                                sanitized[key] = null;
+                            } else if (rest[key] instanceof Date) {
+                                sanitized[key] = rest[key].toISOString();
+                            } else {
+                                sanitized[key] = rest[key];
+                            }
                         }
+                        itemsToInsert.push(sanitized);
+                        itemsToMarkSynced.push(item.id);
                     }
-                    itemsToInsert.push(sanitized);
                 }
 
-                const { error } = await supabase
-                    .from(tableDef.supabase)
-                    .upsert(itemsToInsert, { onConflict: 'id' });
+                if (itemsToInsert.length > 0) {
+                    const { error } = await supabase
+                        .from(tableDef.supabase)
+                        .upsert(itemsToInsert, { onConflict: 'id' });
 
-                if (error) {
-                    console.warn(`Bulk upsert failed for ${tableDef.local}, falling back to singular upserts. Error: ${error.message}`);
-                    for (const item of itemsToInsert) {
-                        const { error: singleErr } = await supabase.from(tableDef.supabase).upsert([item], { onConflict: 'id' });
-                        if (singleErr) {
-                            console.error(`Failed to upsert item ${item.id} in ${tableDef.local}:`, singleErr);
-                            // If it's a foreign key violation (23503), the parent is missing in the cloud. Delete local orphan.
-                            if (singleErr.code === '23503') {
-                                console.log(`Deleting local orphan ${item.id} from ${tableDef.local} due to missing parent reference.`);
-                                await db.runAsync(`DELETE FROM ${tableDef.local} WHERE id = ?`, item.id);
+                    if (error) {
+                        console.warn(`[SYNC] Bulk upsert failed for ${tableDef.local}: ${error.message}`);
+                        // Fallback logic for singular upserts if needed...
+                        for (const item of itemsToInsert) {
+                            const { error: singleErr } = await supabase.from(tableDef.supabase).upsert([item], { onConflict: 'id' });
+                            if (!singleErr) {
+                                await db.runAsync(`UPDATE ${tableDef.local} SET synced = 1 WHERE id = ?`, item.id);
+                                totalSynced++;
                             }
-                        } else {
-                            await db.runAsync(`UPDATE ${tableDef.local} SET synced = 1 WHERE id = ?`, item.id);
-                            totalSynced++;
                         }
+                    } else {
+                        // Mark ONLY the successfully synced items as synced
+                        for (const id of itemsToMarkSynced) {
+                            await db.runAsync(`UPDATE ${tableDef.local} SET synced = 1 WHERE id = ?`, id);
+                        }
+                        totalSynced += itemsToMarkSynced.length;
                     }
-                } else {
-                    for (const item of unsyncedItems) {
-                        await db.runAsync(`UPDATE ${tableDef.local} SET synced = 1 WHERE id = ?`, item.id);
-                    }
-                    totalSynced += unsyncedItems.length;
                 }
             }
         }
@@ -288,7 +332,7 @@ export const syncAllToSupabase = async () => {
     try {
         console.log("--- RUNNING RAW NETWORK DIAGNOSTIC ---");
         try {
-            const url = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://xyzcompany.supabase.co';
+            let url = (process.env.EXPO_PUBLIC_SUPABASE_URL || '').replace(/\/$/, ""); 
             const key = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'public-anon-key';
 
             console.log("Raw Fetching to URL:", url + "/rest/v1/");
@@ -303,7 +347,37 @@ export const syncAllToSupabase = async () => {
             console.log("Raw Fetch Status:", rawRes.status);
             const text = await rawRes.text();
             console.log("Raw Fetch Response:", text.substring(0, 100));
+
+            // --- SCHEMA DISCOVERY ---
+            console.log("[SYNC] 🔍 TESTING TABLE ACCESSIBILITY...");
+            const tablesToTest = ['pos_categories', 'pos_products', 'pos_ingredients', 'device_locks'];
+            for (const t of tablesToTest) {
+                const { error } = await supabase.from(t).select('count', { count: 'exact', head: true });
+                if (error) {
+                    console.error(`[SYNC] ❌ Missing or inaccessible table: ${t} (${error.message})`);
+                } else {
+                    console.log(`[SYNC] ✅ Table found: ${t}`);
+                }
+            }
+
             console.log("--- DIAGNOSTIC COMPLETE (NO CRASH) ---");
+
+            // --- LOCAL DATA DUMP ---
+            const db = await getDBConnection();
+            const sampleProducts = await db.getAllAsync('SELECT id, name, image_uri, synced FROM products LIMIT 3');
+            console.log("[SYNC] 📝 Local Product Samples:", JSON.stringify(sampleProducts, null, 2));
+
+            // --- REPAIR STEP ---
+            console.log("[SYNC] Checking for broken sync states...");
+            const repairResult = await db.runAsync(`
+                UPDATE products 
+                SET synced = 0 
+                WHERE synced = 1 
+                AND (image_uri LIKE 'file://%' OR image_uri LIKE 'blob:%' OR image_uri LIKE 'data:%')
+            `);
+            if (repairResult.changes > 0) {
+                console.log(`[SYNC] 🔧 Repaired ${repairResult.changes} products that were in a broken cloud state.`);
+            }
         } catch (rawErr) {
             console.error("!!! RAW FETCH CRASHED !!!");
             console.error("Message:", rawErr.message);
